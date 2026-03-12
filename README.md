@@ -6,8 +6,9 @@
   <p align="center">
     <a href="spec/specification.md">Specification</a> &middot;
     <a href="sdk-python/">Python SDK</a> &middot;
-    <a href="examples/">Examples</a> &middot;
-    <a href="spec/schemas/">JSON Schemas</a> &middot;
+    <a href="sdk-go/">Go SDK</a> &middot;
+    <a href="sdk-java/">Java SDK</a> &middot;
+    <a href="sdk-js/">JS/TS SDK</a> &middot;
     <a href="spec/openapi.yaml">OpenAPI</a>
   </p>
 </p>
@@ -16,7 +17,7 @@
 
 ## What is AIP?
 
-**AIP (Agent Interaction Protocol)** is an open standard for structured communication between autonomous AI agents. It defines a universal wire format for agent-to-agent messaging and a self-describing discovery mechanism.
+**AIP (Agent Interaction Protocol)** is an open standard for structured communication between autonomous AI agents. It defines a universal wire format for agent-to-agent messaging, streaming task execution, and a self-describing discovery mechanism.
 
 > **MCP solved "how does an AI call tools."**
 > **AIP solves "how do AIs talk to each other."**
@@ -27,22 +28,23 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 
 | Problem | AIP's Answer |
 |---------|-------------|
-| No standard for agent-to-agent messaging | Unified JSON envelope with `POST /aip` |
-| Agents can't discover each other | Self-describing `GET /status` with recursive topology |
+| No standard for agent-to-agent messaging | Unified JSON envelope with `POST /v1/aip` |
+| Agents can't discover each other | Rich `GET /v1/status` with skills, auth schemes, and recursive topology |
+| No streaming for long-running tasks | SSE streaming by default, JSON fallback with `Accept` header switch |
+| No task lifecycle management | Full Task API: create, query, cancel, send follow-ups |
 | No governance for autonomous agents | Built-in approval workflows, authority weights, constraints |
 | No observability across agent networks | First-class trace IDs, correlation IDs, latency tracking |
-| Existing protocols are framework-locked | Transport-agnostic, language-agnostic, framework-agnostic |
+| Existing protocols are framework-locked | SDKs for Python, Go, Java, and JS/TS |
 
-## Two Endpoints, One Protocol
-
-AIP is intentionally minimal. Every AIP-compliant agent implements exactly two endpoints:
+## Core Endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /aip` | Send a structured message to an agent |
-| `GET /status` | Discover agent identity, health, and capabilities |
-
-That's it. No complex handshakes, no session management, no proprietary transports.
+| `POST /v1/aip` | Send a message (SSE streaming by default) |
+| `GET /v1/status` | Discover agent identity, skills, and capabilities |
+| `GET /v1/tasks/{id}` | Query task state, progress, and artifacts |
+| `POST /v1/tasks/{id}/cancel` | Cancel a running task |
+| `POST /v1/tasks/{id}/send` | Send follow-up input into a task |
 
 ## Quick Start
 
@@ -63,80 +65,128 @@ msg = build_message(
 )
 
 ack = send(base_url="http://localhost:8000", message=msg)
+print(ack["task_id"])  # Track the task
+```
+
+### Go
+
+```go
+import aip "github.com/aip-protocol/aip/sdk-go"
+
+client := aip.NewClient("http://localhost:8000")
+msg := aip.BuildMessage("user", "agent-backend", aip.ActionAssignTask, "Design the API")
+ack, _ := client.Send(ctx, msg)
+
+// Or stream progress:
+stream, _ := client.SendStream(ctx, msg)
+defer stream.Close()
+for {
+    event, err := stream.Next()
+    if err != nil { break }
+    fmt.Println(event.Event, event.Data)
+}
+```
+
+### JavaScript / TypeScript
+
+```typescript
+import { AIPClient, buildMessage } from "@aip-protocol/sdk";
+
+const client = new AIPClient("http://localhost:8000");
+const msg = buildMessage({
+  from: "user", to: "agent-backend",
+  action: "assign_task", intent: "Design the API",
+});
+
+// Streaming (default)
+for await (const event of client.sendStream(msg)) {
+  console.log(event.event, event.data);
+}
+
+// Or non-streaming
+const ack = await client.send(msg);
+```
+
+### Java
+
+```java
+var client = new AIPClient("http://localhost:8000");
+var msg = AIPMessage.builder("user", "agent-backend", "assign_task", "Design the API").build();
+AIPAck ack = client.send(msg);
 ```
 
 ### Any Language (just HTTP + JSON)
 
 ```bash
-curl -X POST http://agent.example.com/aip \
+# Streaming (default)
+curl -N -X POST http://agent.example.com/v1/aip \
   -H "Content-Type: application/json" \
-  -d '{
-    "version": "1.0",
-    "message_id": "msg-001",
-    "from": "user",
-    "to": "agent-backend",
-    "action": "assign_task",
-    "intent": "Design the order service API",
-    "payload": {"instruction": "Define REST endpoints and schemas"}
-  }'
+  -H "Accept: text/event-stream" \
+  -d '{"version":"1.0","message_id":"msg-001","from":"user","to":"agent-backend","action":"assign_task","intent":"Design the API"}'
+
+# Non-streaming
+curl -X POST http://agent.example.com/v1/aip \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"version":"1.0","message_id":"msg-001","from":"user","to":"agent-backend","action":"assign_task","intent":"Design the API"}'
 ```
 
-## Message Format
+## Streaming by Default
 
-Every AIP message is a JSON envelope with four layers:
+AIP uses **Server-Sent Events (SSE)** as the default response mode. Long-running agent tasks stream real-time progress:
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Protocol Layer                                  │
-│  version, message_id, from, to, route_scope     │
-├─────────────────────────────────────────────────┤
-│  Execution Layer                                 │
-│  action, intent, payload, constraints, priority  │
-├─────────────────────────────────────────────────┤
-│  Governance Layer                                │
-│  authority_weight, approval_state                │
-├─────────────────────────────────────────────────┤
-│  Observability Layer                             │
-│  trace_id, correlation_id, latency_ms, errors   │
-└─────────────────────────────────────────────────┘
+event: status
+data: {"task_id":"task-001","state":"working","progress":0.3}
+
+event: message
+data: {"intent":"Partial result: endpoint list complete"}
+
+event: artifact
+data: {"artifact_id":"art-001","name":"orders-api.yaml","mime_type":"application/yaml","uri":"/artifacts/art-001"}
+
+event: done
+data: {"ok":true,"message_id":"msg-001","to":"agent-backend","status":"received","task_id":"task-001"}
 ```
 
-## Discovery
+Opt out of streaming with `Accept: application/json` or `?stream=false`.
 
-Any AIP agent can be discovered via `GET /status`:
+## Task Lifecycle
+
+Tasks track long-running agent work with a complete state machine:
+
+```
+submitted → working → completed
+               ├──→ input-required → working
+               ├──→ failed
+               └──→ canceled
+```
+
+Query, cancel, or send follow-up input at any time via the Task API.
+
+## Rich Agent Discovery
+
+Agents describe their capabilities with **structured skills** (aligned with A2A Agent Card):
 
 ```json
 {
   "agent_id": "agent-backend",
   "role": "backend_engineer",
-  "lifecycle": "running",
-  "ok": true,
-  "base_url": "https://agent-backend.example.com",
-  "endpoints": {
-    "aip": "https://agent-backend.example.com/aip",
-    "status": "https://agent-backend.example.com/status"
-  },
-  "capabilities": ["assign_task", "submit_report"],
+  "skills": [
+    {
+      "id": "api-design",
+      "name": "REST API Design",
+      "description": "Design RESTful APIs with OpenAPI output",
+      "tags": ["backend", "api"],
+      "input_modes": ["application/json", "text/plain"],
+      "output_modes": ["application/json", "application/yaml"],
+      "input_schema": { "type": "object", "properties": { "instruction": { "type": "string" } } }
+    }
+  ],
+  "authentication": { "schemes": ["bearer", "oauth2"] },
   "supported_versions": ["1.0"]
 }
 ```
-
-Coordinators return recursive topology — discover an entire agent network from a single status call.
-
-## Standard Actions
-
-| Action | Description |
-|--------|-------------|
-| `assign_task` | Delegate a task to another agent |
-| `submit_report` | Submit a result or progress report |
-| `request_context` | Request information from another agent |
-| `request_approval` | Request human or supervisor approval |
-| `handoff` | Transfer task responsibility |
-| `escalate` | Escalate an issue to a higher authority |
-| `user_instruction` | A directive from a human user |
-| ... | [Full list in the specification](spec/specification.md#42-standard-actions) |
-
-Custom actions are supported with `x-<org>/<name>` prefix.
 
 ## Governance Built In
 
@@ -155,13 +205,10 @@ aip/
 │   ├── specification.md           # Full spec (RFC-style)
 │   ├── openapi.yaml               # OpenAPI 3.1 description
 │   └── schemas/                   # JSON Schema files
-│       ├── message.schema.json
-│       ├── ack.schema.json
-│       └── status.schema.json
-├── sdk-python/                    # Python SDK (reference implementation)
-│   ├── src/aip/                   # Package source
-│   ├── tests/                     # Test suite
-│   └── pyproject.toml
+├── sdk-python/                    # Python SDK
+├── sdk-go/                        # Go SDK
+├── sdk-java/                      # Java SDK
+├── sdk-js/                        # JavaScript/TypeScript SDK
 ├── examples/                      # Quick-start examples
 │   ├── minimal-python/
 │   └── minimal-typescript/
@@ -176,12 +223,15 @@ aip/
 | | MCP | Google A2A | AIP |
 |---|---|---|---|
 | **Focus** | Model ↔ Tool | Agent ↔ Agent | Agent ↔ Agent |
-| **Discovery** | Server manifest | Agent Card | Recursive `GET /status` |
+| **Discovery** | Server manifest | Agent Card | Recursive `GET /status` + Skill schemas |
+| **Streaming** | SSE (tool results) | SSE | SSE (default, with opt-out) |
+| **Task Management** | None | Task lifecycle | Full Task API (query, cancel, follow-up) |
 | **Governance** | None | None | Built-in (approval, authority, constraints) |
 | **Topology** | Flat | Flat | Recursive (trees, hierarchies) |
-| **Status** | None | Task status | Full agent lifecycle + work snapshot |
 | **Observability** | Minimal | Minimal | First-class (trace, correlation, latency) |
-| **Transport** | stdio/SSE | HTTP | HTTP (pluggable to WS, gRPC, MQ) |
+| **SDKs** | Python, TS | Python, Go, JS, Java, .NET | Python, Go, Java, JS/TS |
+| **Versioning** | None | JSON-RPC | URL path (`/v1/`) |
+| **Transport** | stdio/SSE | HTTP (JSON-RPC 2.0) | HTTP (pluggable to WS, gRPC, MQ) |
 
 ## Contributing
 

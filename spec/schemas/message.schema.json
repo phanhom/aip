@@ -152,9 +152,27 @@
       "description": "Processing latency in milliseconds.",
       "default": null
     },
+    "callback_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Webhook URL where the receiver should POST task results upon completion.",
+      "default": null
+    },
+    "callback_secret": {
+      "type": ["string", "null"],
+      "description": "Shared secret for HMAC-SHA256 signature verification of callback payloads.",
+      "default": null
+    },
     "error_code": {
       "type": ["string", "null"],
-      "description": "Machine-readable error code.",
+      "description": "Machine-readable error code from the AIP error registry (aip/<category>/<error>).",
+      "examples": [
+        "aip/protocol/invalid_message",
+        "aip/execution/task_failed",
+        "aip/governance/authority_insufficient",
+        "aip/auth/unauthenticated",
+        "aip/ratelimit/exceeded"
+      ],
       "default": null
     },
     "error_message": {

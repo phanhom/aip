@@ -6,9 +6,11 @@ info:
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     
-    AIP defines two endpoints:
-    - `POST /aip` — Send a structured message to an agent.
-    - `GET /status` — Discover an agent's identity, health, capabilities, and subordinates.
+    AIP uses URL path versioning (e.g., `/v1/`) following the same pattern as OpenAI, Stripe, and other widely adopted APIs.
+    
+    AIP defines two versioned endpoints:
+    - `POST /v1/aip` — Send a structured message to an agent.
+    - `GET /v1/status` — Discover an agent's identity, health, capabilities, and subordinates.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -21,7 +23,7 @@ servers:
     description: Example AIP-compliant agent
 
 paths:
-  /aip:
+  /v1/aip:
     post:
       operationId: sendMessage
       summary: Send an AIP message
@@ -66,7 +68,10 @@ paths:
                   status: "Completed"
       responses:
         "200":
-          description: Message accepted
+          description: |
+            Message accepted. Response format depends on the Accept header:
+            - `Accept: text/event-stream` (default): SSE stream with status/message/artifact/done events
+            - `Accept: application/json`: Single JSON AIPAck
           content:
             application/json:
               schema:
@@ -76,6 +81,11 @@ paths:
                 message_id: "msg-001"
                 to: "agent-backend"
                 status: "received"
+                task_id: "task-001"
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE event stream (event types: status, message, artifact, error, done)
         "400":
           description: Routing error (e.g., `to` does not match receiving agent)
         "401":
@@ -89,7 +99,7 @@ paths:
         "503":
           description: Upstream or forwarding target unavailable
 
-  /status:
+  /v1/status:
     get:
       operationId: getStatus
       summary: Get agent status
@@ -137,8 +147,8 @@ paths:
                     ok: true
                     base_url: "https://agent-backend.example.com"
                     endpoints:
-                      aip: "https://agent-backend.example.com/aip"
-                      status: "https://agent-backend.example.com/status"
+                      aip: "https://agent-backend.example.com/v1/aip"
+                      status: "https://agent-backend.example.com/v1/status"
                     capabilities: ["assign_task", "submit_report"]
                     supported_versions: ["1.0"]
                     pending_tasks: 2
@@ -160,6 +170,74 @@ paths:
                         role: "backend_engineer"
                         lifecycle: "running"
                         ok: true
+
+  /v1/tasks/{task_id}:
+    get:
+      operationId: getTask
+      summary: Get task state
+      description: Retrieve full task state, artifacts, and message history.
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPTask"
+        "404":
+          description: Task not found
+
+  /v1/tasks/{task_id}/cancel:
+    post:
+      operationId: cancelTask
+      summary: Cancel a task
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task canceled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPTask"
+        "404":
+          description: Task not found
+
+  /v1/tasks/{task_id}/send:
+    post:
+      operationId: sendToTask
+      summary: Send follow-up message into an existing task
+      description: Used to provide additional input when a task is in `input-required` state.
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIPMessage"
+      responses:
+        "200":
+          description: Message accepted into task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPAck"
+        "404":
+          description: Task not found
 
 components:
   schemas:
@@ -231,6 +309,13 @@ components:
           type: string
           enum: [not_required, waiting_human, approved, rejected]
           default: not_required
+        callback_url:
+          type: ["string", "null"]
+          format: uri
+          description: Webhook URL where the receiver should POST task results upon completion.
+        callback_secret:
+          type: ["string", "null"]
+          description: Shared secret for HMAC-SHA256 signature verification of callback payloads.
         retries:
           type: integer
           minimum: 0
@@ -262,8 +347,175 @@ components:
         status:
           type: string
           enum: [received, queued, rejected]
+        task_id:
+          type: ["string", "null"]
+          description: Task identifier if the message triggered a task.
+        error_code:
+          type: ["string", "null"]
+          description: Machine-readable error code (present when ok is false).
+        error_message:
+          type: ["string", "null"]
+          description: Human-readable error description (present when ok is false).
         correlation_id:
           type: ["string", "null"]
+
+    AIPTask:
+      type: object
+      required: [task_id, message_id, state, from, to, action, intent, created_at, updated_at]
+      description: A long-running task tracked by the agent.
+      properties:
+        task_id:
+          type: string
+        message_id:
+          type: string
+        state:
+          type: string
+          enum: [submitted, working, input-required, completed, failed, canceled]
+        from:
+          type: string
+        to:
+          type: string
+        action:
+          type: string
+        intent:
+          type: string
+        progress:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 1
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Artifact"
+          default: []
+        history:
+          type: array
+          items:
+            type: object
+          default: []
+        error_code:
+          type: ["string", "null"]
+        error_message:
+          type: ["string", "null"]
+        metadata:
+          type: ["object", "null"]
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Artifact:
+      type: object
+      required: [artifact_id, name, mime_type]
+      description: A file, document, or structured data produced during task execution.
+      properties:
+        artifact_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        mime_type:
+          type: string
+        uri:
+          type: ["string", "null"]
+          format: uri
+        inline_data:
+          type: ["string", "null"]
+          description: Base64-encoded content for small artifacts.
+        metadata:
+          type: ["object", "null"]
+          additionalProperties: true
+
+    Skill:
+      type: object
+      required: [id, name, description]
+      description: Structured skill descriptor for rich agent discovery.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        input_modes:
+          type: array
+          items:
+            type: string
+          default: ["application/json"]
+        output_modes:
+          type: array
+          items:
+            type: string
+          default: ["application/json"]
+        input_schema:
+          type: ["object", "null"]
+          additionalProperties: true
+        output_schema:
+          type: ["object", "null"]
+          additionalProperties: true
+        examples:
+          type: array
+          items:
+            type: object
+          default: []
+
+    AuthenticationInfo:
+      type: object
+      description: Authentication schemes supported by the agent.
+      properties:
+        schemes:
+          type: array
+          items:
+            type: string
+          default: []
+        oauth2:
+          type: ["object", "null"]
+          properties:
+            token_url:
+              type: string
+              format: uri
+            scopes:
+              type: array
+              items:
+                type: string
+
+    RateLimitInfo:
+      type: object
+      description: Rate limiting and quota information for client self-regulation.
+      properties:
+        max_requests_per_minute:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Maximum POST /v1/aip requests per minute. null = unlimited.
+        max_requests_per_day:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Maximum requests per calendar day (UTC). null = unlimited.
+        max_concurrent_tasks:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Maximum simultaneous tasks in non-terminal state. null = unlimited.
+        remaining_requests:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Remaining requests in the current minute window.
+        remaining_tasks:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Remaining task slots available.
+        reset_at:
+          type: ["string", "null"]
+          format: date-time
+          description: ISO 8601 UTC timestamp when the rate limit window resets.
 
     StatusEndpoints:
       type: object
@@ -334,11 +586,25 @@ components:
           items:
             type: string
           default: []
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/Skill"
+          default: []
         supported_versions:
           type: array
           items:
             type: string
           default: ["1.0"]
+        authentication:
+          oneOf:
+            - $ref: "#/components/schemas/AuthenticationInfo"
+            - type: "null"
+        rate_limits:
+          oneOf:
+            - $ref: "#/components/schemas/RateLimitInfo"
+            - type: "null"
+          description: Rate limiting and quota information.
         pending_tasks:
           type: integer
           default: 0

@@ -64,8 +64,8 @@ console.log(JSON.stringify(message, null, 2));
 
 // ── Send to an AIP agent ────────────────────────────────────────────
 
-async function sendAIP(baseUrl: string, msg: AIPMessage): Promise<AIPAck> {
-  const res = await fetch(`${baseUrl}/aip`, {
+async function sendAIP(baseUrl: string, msg: AIPMessage, apiVersion = "v1"): Promise<AIPAck> {
+  const res = await fetch(`${baseUrl}/${apiVersion}/aip`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(msg),

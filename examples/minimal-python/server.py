@@ -5,8 +5,8 @@
     python server.py
 
 This creates an agent that:
-  - Accepts AIP messages at POST /aip
-  - Exposes status at GET /status
+  - Accepts AIP messages at POST /v1/aip
+  - Exposes status at GET /v1/status
   - Logs incoming messages
 """
 
@@ -31,7 +31,7 @@ BASE_URL = "http://localhost:8000"
 messages: list[dict] = []
 
 
-@app.post("/aip")
+@app.post("/v1/aip")
 async def receive_message(request: Request):
     body = await request.json()
     msg = AIPMessage(**body)
@@ -48,7 +48,7 @@ async def receive_message(request: Request):
     ).model_dump()
 
 
-@app.get("/status")
+@app.get("/v1/status")
 async def get_status():
     return AgentStatus(
         agent_id=AGENT_ID,
@@ -57,8 +57,8 @@ async def get_status():
         ok=True,
         base_url=BASE_URL,
         endpoints=StatusEndpoints(
-            aip=f"{BASE_URL}/aip",
-            status=f"{BASE_URL}/status",
+            aip=f"{BASE_URL}/v1/aip",
+            status=f"{BASE_URL}/v1/status",
         ),
         capabilities=["assign_task", "submit_report", "request_context"],
         supported_versions=["1.0"],

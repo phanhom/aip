@@ -34,6 +34,7 @@ DEFAULT_MAX_RETRIES = 4
 DEFAULT_BACKOFF_BASE = 1.0
 DEFAULT_BACKOFF_MAX = 60.0
 DEFAULT_BACKOFF_JITTER = 0.2
+DEFAULT_API_VERSION = "v1"
 
 
 def _log_suffix(extra: dict[str, Any]) -> str:
@@ -51,6 +52,7 @@ class SendParams:
     backoff_max: float = DEFAULT_BACKOFF_MAX
     backoff_jitter: float = DEFAULT_BACKOFF_JITTER
     idempotency_key: str | None = None
+    api_version: str = DEFAULT_API_VERSION
 
     def backoff_delay(self, attempt: int) -> float:
         """Exponential backoff with cap and jitter."""
@@ -76,7 +78,7 @@ def send(
     body = message.to_wire() if hasattr(message, "to_wire") else message
     p = params or SendParams()
     log = logger or _default_logger
-    url = f"{base_url.rstrip('/')}/aip"
+    url = f"{base_url.rstrip('/')}/{p.api_version}/aip"
     extra = {"message_id": body.get("message_id", ""), **(log_extra or {})}
 
     if log.isEnabledFor(logging.INFO):
@@ -165,7 +167,7 @@ async def async_send(
     body = message.to_wire() if hasattr(message, "to_wire") else message
     p = params or SendParams()
     log = logger or _default_logger
-    url = f"{base_url.rstrip('/')}/aip"
+    url = f"{base_url.rstrip('/')}/{p.api_version}/aip"
     extra = {"message_id": body.get("message_id", ""), **(log_extra or {})}
 
     if log.isEnabledFor(logging.INFO):

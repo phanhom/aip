@@ -12,12 +12,12 @@
         "aip": {
           "type": ["string", "null"],
           "format": "uri",
-          "description": "Full URL of the messaging endpoint."
+          "description": "Full URL of the messaging endpoint (e.g., https://agent.example.com/v1/aip)."
         },
         "status": {
           "type": ["string", "null"],
           "format": "uri",
-          "description": "Full URL of the status endpoint."
+          "description": "Full URL of the status endpoint (e.g., https://agent.example.com/v1/status)."
         }
       },
       "additionalProperties": true
@@ -55,6 +55,44 @@
           "minimum": 0,
           "description": "Number of incomplete tasks.",
           "default": 0
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "RateLimitInfo": {
+      "type": "object",
+      "description": "Rate limiting and quota information for client self-regulation.",
+      "properties": {
+        "max_requests_per_minute": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum POST /v1/aip requests per minute. null = unlimited."
+        },
+        "max_requests_per_day": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum requests per calendar day (UTC). null = unlimited."
+        },
+        "max_concurrent_tasks": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum simultaneous tasks in non-terminal state. null = unlimited."
+        },
+        "remaining_requests": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Remaining requests in the current minute window."
+        },
+        "remaining_tasks": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Remaining task slots available."
+        },
+        "reset_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp when the rate limit window resets."
         }
       },
       "additionalProperties": true
@@ -126,6 +164,14 @@
           "items": { "type": "string" },
           "description": "Protocol versions this agent supports.",
           "default": ["1.0"]
+        },
+        "rate_limits": {
+          "oneOf": [
+            { "$ref": "#/$defs/RateLimitInfo" },
+            { "type": "null" }
+          ],
+          "description": "Rate limiting and quota information.",
+          "default": null
         },
         "pending_tasks": {
           "type": "integer",

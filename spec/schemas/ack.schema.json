@@ -23,6 +23,21 @@
       "enum": ["received", "queued", "rejected"],
       "description": "Acceptance status."
     },
+    "task_id": {
+      "type": ["string", "null"],
+      "description": "Task identifier if the message triggered a task.",
+      "default": null
+    },
+    "error_code": {
+      "type": ["string", "null"],
+      "description": "Machine-readable error code (present when ok is false).",
+      "default": null
+    },
+    "error_message": {
+      "type": ["string", "null"],
+      "description": "Human-readable error description (present when ok is false).",
+      "default": null
+    },
     "correlation_id": {
       "type": ["string", "null"],
       "description": "Echoed correlation_id from the request, if present.",

@@ -64,6 +64,50 @@ class AIPAction(str, Enum):
     user_instruction = "user_instruction"
 
 
+class AIPErrorCode:
+    """Standard error code registry (aip/ namespace).
+
+    Use these constants instead of raw strings for type safety and discoverability.
+    """
+
+    # Protocol errors
+    INVALID_VERSION = "aip/protocol/invalid_version"
+    UNSUPPORTED_VERSION = "aip/protocol/unsupported_version"
+    INVALID_MESSAGE = "aip/protocol/invalid_message"
+    ROUTING_FAILED = "aip/protocol/routing_failed"
+    AGENT_NOT_FOUND = "aip/protocol/agent_not_found"
+    AGENT_UNAVAILABLE = "aip/protocol/agent_unavailable"
+    IDEMPOTENCY_CONFLICT = "aip/protocol/idempotency_conflict"
+    IDEMPOTENCY_CONCURRENT = "aip/protocol/idempotency_concurrent"
+
+    # Execution errors
+    UNKNOWN_ACTION = "aip/execution/unknown_action"
+    INVALID_PAYLOAD = "aip/execution/invalid_payload"
+    TASK_FAILED = "aip/execution/task_failed"
+    TASK_TIMEOUT = "aip/execution/task_timeout"
+    TASK_NOT_FOUND = "aip/execution/task_not_found"
+    TASK_NOT_CANCELABLE = "aip/execution/task_not_cancelable"
+    CAPACITY_EXCEEDED = "aip/execution/capacity_exceeded"
+    INPUT_REQUIRED = "aip/execution/input_required"
+
+    # Governance errors
+    AUTHORITY_INSUFFICIENT = "aip/governance/authority_insufficient"
+    APPROVAL_REQUIRED = "aip/governance/approval_required"
+    APPROVAL_REJECTED = "aip/governance/approval_rejected"
+    CONSTRAINT_VIOLATED = "aip/governance/constraint_violated"
+    POLICY_DENIED = "aip/governance/policy_denied"
+
+    # Auth errors
+    UNAUTHENTICATED = "aip/auth/unauthenticated"
+    UNAUTHORIZED = "aip/auth/unauthorized"
+    TOKEN_EXPIRED = "aip/auth/token_expired"
+    INVALID_TOKEN = "aip/auth/invalid_token"
+
+    # Rate limiting errors
+    RATE_LIMIT_EXCEEDED = "aip/ratelimit/exceeded"
+    QUOTA_EXHAUSTED = "aip/ratelimit/quota_exhausted"
+
+
 class AIPMessage(BaseModel):
     """AIP message envelope — the universal wire format for agent communication.
 
@@ -100,6 +144,9 @@ class AIPMessage(BaseModel):
     requires_approval: bool = False
     approval_state: ApprovalState = ApprovalState.not_required
 
+    callback_url: str | None = None
+    callback_secret: str | None = None
+
     retries: int = 0
     latency_ms: int | None = None
     error_code: str | None = None
@@ -127,7 +174,72 @@ class AIPAck(BaseModel):
     message_id: str
     to: str
     status: str = "received"
+    task_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
     correlation_id: str | None = None
+
+
+class TaskState(str, Enum):
+    """Task lifecycle states."""
+
+    submitted = "submitted"
+    working = "working"
+    input_required = "input-required"
+    completed = "completed"
+    failed = "failed"
+    canceled = "canceled"
+
+
+class Artifact(BaseModel):
+    """A file, document, or structured data produced during task execution."""
+
+    artifact_id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str
+    description: str | None = None
+    mime_type: str = "application/json"
+    uri: str | None = None
+    inline_data: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AIPTask(BaseModel):
+    """A long-running task tracked by the agent."""
+
+    task_id: str = Field(default_factory=lambda: str(uuid4()))
+    message_id: str
+    state: TaskState = TaskState.submitted
+    from_agent: str = Field(..., alias="from")
+    to: str
+    action: AIPAction | str
+    intent: str
+    progress: float | None = None
+    artifacts: list[Artifact] = Field(default_factory=list)
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
+
+    model_config = {"populate_by_name": True}
+
+    def to_wire(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, mode="json")
+
+
+class Skill(BaseModel):
+    """Structured skill descriptor for rich agent discovery."""
+
+    id: str
+    name: str
+    description: str
+    tags: list[str] = Field(default_factory=list)
+    input_modes: list[str] = Field(default_factory=lambda: ["application/json"])
+    output_modes: list[str] = Field(default_factory=lambda: ["application/json"])
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+    examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def build_message(

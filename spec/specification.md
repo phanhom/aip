@@ -22,8 +22,8 @@ As AI agents become increasingly autonomous and collaborative, the ecosystem lac
 
 AIP fills this gap by defining:
 
-- **Messaging Protocol** — a structured JSON envelope for agent-to-agent and human-to-agent communication via `POST /aip`.
-- **Status Protocol** — a self-describing discovery mechanism via `GET /status` that enables zero-configuration agent discovery.
+- **Messaging Protocol** — a structured JSON envelope for agent-to-agent and human-to-agent communication via `POST /v1/aip`.
+- **Status Protocol** — a self-describing discovery mechanism via `GET /v1/status` that enables zero-configuration agent discovery.
 
 ### 1.2 Design Goals
 
@@ -61,18 +61,84 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 The default transport for AIP is HTTP with JSON request and response bodies.
 
-- Messaging endpoint: `POST /aip`
-- Status endpoint: `GET /status`
+- Messaging endpoint: `POST /v{major}/aip`
+- Status endpoint: `GET /v{major}/status`
 - Content-Type: `application/json`
 - Character encoding: UTF-8
 
+For protocol version `1.x`, the endpoints are:
+
+- `POST /v1/aip`
+- `GET /v1/status`
+
 Implementations MAY support additional transports (WebSocket, gRPC, NATS, etc.) provided the message semantics defined in this specification are preserved.
 
-### 2.2 HTTP Status Codes
+### 2.2 URL Path Versioning
+
+AIP uses **URL path versioning** to enable safe, independent evolution of the protocol — following the same pattern as OpenAI (`/v1/...`), Stripe, and other widely adopted APIs.
+
+**Rules:**
+
+- The path prefix MUST be `/v{MAJOR}` where `{MAJOR}` is the protocol major version number (e.g., `/v1`, `/v2`).
+- The major version in the URL path MUST correspond to the `version` field in the message envelope. A `v1` endpoint MUST accept messages with `"version": "1.x"`.
+- Servers MAY serve multiple major versions simultaneously (e.g., `/v1/aip` and `/v2/aip`) during migration periods.
+- When a new major version is released, the previous major version SHOULD remain available for at least 12 months with a deprecation notice.
+- Servers SHOULD return HTTP `410 Gone` for sunset versions.
+- Discovery endpoints (`GET /v1/status`) MUST include a `supported_versions` field listing all active major versions.
+
+**Backward Compatibility:**
+
+For backward compatibility with pre-versioned deployments, servers MAY also accept requests at the unversioned paths (`/aip`, `/status`). When unversioned paths are supported, they MUST behave identically to the latest stable major version. Implementations SHOULD log a deprecation warning for unversioned access.
+
+### 2.3 Streaming (Server-Sent Events)
+
+AIP supports **streaming responses** via Server-Sent Events (SSE). Streaming is the **default** response mode for `POST /v1/aip` — this enables real-time progress updates for long-running agent tasks.
+
+**Request header to control streaming:**
+
+| Header | Value | Behavior |
+|--------|-------|----------|
+| `Accept: text/event-stream` | (default) | Server streams SSE events as the task progresses, ending with a final `AIPAck`. |
+| `Accept: application/json` | opt-out | Server returns a single JSON `AIPAck` (non-streaming, synchronous mode). |
+
+Clients MAY also pass the query parameter `?stream=false` to disable streaming.
+
+**SSE Event Types:**
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `status` | `{"task_id": "...", "state": "working", "progress": 0.3}` | Task progress update. |
+| `message` | Partial `AIPMessage` JSON | Intermediate result or partial output from the agent. |
+| `artifact` | `{"artifact_id": "...", "name": "...", "mime_type": "...", "uri": "..."}` | An artifact produced during task execution. |
+| `error` | `{"error_code": "...", "error_message": "..."}` | An error occurred during processing. |
+| `done` | Full `AIPAck` JSON | Final acknowledgment. Stream ends after this event. |
+
+**SSE Format (per the W3C SSE specification):**
+
+```
+event: status
+data: {"task_id":"task-001","state":"working","progress":0.3}
+
+event: message
+data: {"intent":"Partial result: API endpoint list complete"}
+
+event: done
+data: {"ok":true,"message_id":"msg-001","to":"agent-backend","status":"received","task_id":"task-001"}
+
+```
+
+**Server requirements:**
+
+- Servers MUST support streaming as the default mode.
+- Servers MUST support `Accept: application/json` for non-streaming clients.
+- If the server does not support streaming, it MUST return a single `AIPAck` with `Content-Type: application/json` regardless of the request `Accept` header.
+- Servers MUST send `event: done` as the last SSE event before closing the stream.
+
+### 2.4 HTTP Status Codes
 
 | Code | Meaning |
 |------|---------|
-| `200` | Message accepted. Response body is an `AIPAck`. |
+| `200` | Message accepted. Response body is an `AIPAck` (JSON) or SSE stream. |
 | `400` | Routing error (e.g., `to` does not match the receiving agent). |
 | `401` | Authentication required. |
 | `403` | Forbidden (insufficient authority or approval). |
@@ -80,7 +146,7 @@ Implementations MAY support additional transports (WebSocket, gRPC, NATS, etc.) 
 | `429` | Rate limited. |
 | `503` | Upstream or forwarding target unavailable. |
 
-### 2.3 TLS
+### 2.5 TLS
 
 Implementations SHOULD use TLS for cross-network communication. Same-host communication MAY use plain HTTP.
 
@@ -100,7 +166,7 @@ An agent's address is determined by the URL of the request target. The message b
 
 ### 3.2 Self-Describing Status
 
-Every AIP-compliant agent MUST expose `GET /status` and SHOULD include the following discovery fields in its response:
+Every AIP-compliant agent MUST expose `GET /v1/status` and SHOULD include the following discovery fields in its response:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -159,7 +225,59 @@ Every AIP message is a JSON object with the following fields, organized into fou
 | `requires_approval` | boolean | OPTIONAL | `false` | Whether this action requires human approval before execution. |
 | `approval_state` | string | OPTIONAL | `"not_required"` | One of: `"not_required"`, `"waiting_human"`, `"approved"`, `"rejected"`. |
 
-#### 4.1.4 Observability Layer
+#### 4.1.4 Callback Layer
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `callback_url` | string \| null | OPTIONAL | `null` | Webhook URL where the receiver should POST task results upon completion. |
+| `callback_secret` | string \| null | OPTIONAL | `null` | Shared secret for HMAC-SHA256 signature verification of callback payloads. |
+
+When `callback_url` is set:
+
+1. The receiver MUST `POST` the final `AIPTask` (or `AIPMessage` with `status: "Completed"` or `"Failed"`) to the callback URL when the task reaches a terminal state.
+2. The callback payload MUST be a valid JSON body with `Content-Type: application/json`.
+3. If `callback_secret` is set, the receiver MUST include an `X-AIP-Signature` header containing the HMAC-SHA256 hex digest of the raw request body, computed with the shared secret: `HMAC-SHA256(callback_secret, body)`.
+4. The receiver SHOULD retry callback delivery up to 3 times with exponential backoff on 5xx responses or timeouts.
+5. The receiver MUST NOT retry on 4xx responses.
+
+**Example message with callback:**
+
+```json
+{
+  "version": "1.0",
+  "message_id": "msg-001",
+  "from": "orchestrator",
+  "to": "agent-backend",
+  "action": "assign_task",
+  "intent": "Design the order service API",
+  "callback_url": "https://orchestrator.example.com/v1/webhooks/task-results",
+  "callback_secret": "whsec_a1b2c3d4e5f6..."
+}
+```
+
+**Callback delivery:**
+
+```http
+POST https://orchestrator.example.com/v1/webhooks/task-results
+Content-Type: application/json
+X-AIP-Signature: sha256=5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a...
+X-AIP-Event: task.completed
+```
+
+```json
+{
+  "task_id": "task-001",
+  "message_id": "msg-001",
+  "state": "completed",
+  "from": "orchestrator",
+  "to": "agent-backend",
+  "action": "assign_task",
+  "intent": "Design the order service API",
+  "artifacts": [...]
+}
+```
+
+#### 4.1.5 Observability Layer
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -190,7 +308,7 @@ Implementations MUST support the following standard actions. Custom actions are 
 
 ### 4.3 Acknowledgment (`AIPAck`)
 
-Every `POST /aip` handler MUST return an `AIPAck` on success:
+Every `POST /v1/aip` handler MUST return an `AIPAck` on success:
 
 ```json
 {
@@ -208,6 +326,7 @@ Every `POST /aip` handler MUST return an `AIPAck` on success:
 | `message_id` | string | REQUIRED | Echoed `message_id` from the request. |
 | `to` | string | REQUIRED | The agent that received the message. |
 | `status` | string | REQUIRED | `"received"`, `"queued"`, `"rejected"`. |
+| `task_id` | string \| null | OPTIONAL | Task identifier if the message triggered a task (see Section 6). |
 | `correlation_id` | string \| null | OPTIONAL | Echoed `correlation_id` if present. |
 
 ### 4.4 Human as Sender
@@ -223,9 +342,9 @@ Receivers distinguish human messages via `from_role` for display, permissions, a
 
 ## 5. Status Protocol
 
-### 5.1 `GET /status`
+### 5.1 `GET /v1/status`
 
-Every AIP-compliant agent MUST implement `GET /status`. The response describes the agent's identity, health, capabilities, and optionally its subordinates.
+Every AIP-compliant agent MUST implement `GET /v1/status`. The response describes the agent's identity, health, capabilities, and optionally its subordinates.
 
 ### 5.2 Query Scopes
 
@@ -235,11 +354,11 @@ Every AIP-compliant agent MUST implement `GET /status`. The response describes t
 | `subtree` | Any agent | Returns the agent and all its subordinates as a recursive tree. |
 | `group` | Coordinator | Returns a flat aggregate view of the entire group. |
 
-The scope is specified via query parameter: `GET /status?scope=self`.
+The scope is specified via query parameter: `GET /v1/status?scope=self`.
 
 - Workers SHOULD default to `scope=self`.
 - Coordinators SHOULD default to `scope=group`.
-- Coordinators SHOULD support `GET /status?scope=subtree&root=<agent_id>`.
+- Coordinators SHOULD support `GET /v1/status?scope=subtree&root=<agent_id>`.
 
 ### 5.3 Agent Status (`AgentStatus`)
 
@@ -254,8 +373,11 @@ The scope is specified via query parameter: `GET /status?scope=self`.
 | `ok` | boolean | OPTIONAL | `true` if the agent is healthy. Default: `true`. |
 | `base_url` | string \| null | OPTIONAL | Agent's base URL for discovery. |
 | `endpoints` | object \| null | OPTIONAL | `{ "aip": "...", "status": "..." }` |
-| `capabilities` | array[string] | OPTIONAL | List of supported actions or skills. |
+| `capabilities` | array[string] | OPTIONAL | List of supported action names (simple discovery). |
+| `skills` | array[Skill] | OPTIONAL | Structured skill descriptors with input/output schemas (rich discovery, see 5.7). |
 | `supported_versions` | array[string] | OPTIONAL | Protocol versions this agent supports. |
+| `authentication` | object \| null | OPTIONAL | Supported auth schemes (see 5.8). |
+| `rate_limits` | object \| null | OPTIONAL | Rate limiting and quota information (see 5.9). |
 | `pending_tasks` | integer | OPTIONAL | Number of pending tasks. Default: `0`. |
 | `recent_errors` | integer | OPTIONAL | Number of recent errors. Default: `0`. |
 | `waiting_for_approval` | boolean | OPTIONAL | Whether the agent is blocked on approval. Default: `false`. |
@@ -305,11 +427,238 @@ For `scope=group`, the response is a flat aggregate:
 | `waiting_for_approval` | boolean | Whether any agent in the group is blocked on approval. |
 | `agents` | array[AgentStatus] | Flat list of all agent statuses. |
 
+### 5.7 Skills (`Skill`)
+
+The `skills` array provides **rich, structured discovery** of an agent's capabilities — analogous to A2A's Agent Card skills. This enables clients to programmatically understand what an agent can do, what inputs it expects, and what outputs it produces.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | REQUIRED | Unique skill identifier (e.g., `"api-design"`, `"code-review"`). |
+| `name` | string | REQUIRED | Human-readable skill name. |
+| `description` | string | REQUIRED | What this skill does. |
+| `tags` | array[string] | OPTIONAL | Categorization tags (e.g., `["backend", "api"]`). |
+| `input_modes` | array[string] | OPTIONAL | Accepted input MIME types. Default: `["application/json"]`. |
+| `output_modes` | array[string] | OPTIONAL | Produced output MIME types. Default: `["application/json"]`. |
+| `input_schema` | object \| null | OPTIONAL | JSON Schema describing expected `payload` structure. |
+| `output_schema` | object \| null | OPTIONAL | JSON Schema describing the output `payload` structure. |
+| `examples` | array[object] | OPTIONAL | Example input/output pairs for documentation. |
+
+**Example:**
+
+```json
+{
+  "skills": [
+    {
+      "id": "api-design",
+      "name": "REST API Design",
+      "description": "Design RESTful APIs with OpenAPI specification output",
+      "tags": ["backend", "api", "openapi"],
+      "input_modes": ["application/json", "text/plain"],
+      "output_modes": ["application/json", "application/yaml"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "instruction": { "type": "string" },
+          "deliverables": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["instruction"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" },
+          "artifacts": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  ]
+}
+```
+
+The `capabilities` array (simple string list) and `skills` array (structured) MAY coexist. `capabilities` provides backward-compatible simple discovery; `skills` provides rich, machine-readable discovery.
+
+### 5.8 Authentication Schemes
+
+Agents SHOULD declare their supported authentication schemes in the status response:
+
+```json
+{
+  "authentication": {
+    "schemes": ["bearer", "api_key", "oauth2"],
+    "oauth2": {
+      "token_url": "https://auth.example.com/token",
+      "scopes": ["agent:read", "agent:write"]
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schemes` | array[string] | Supported auth scheme names (`"bearer"`, `"api_key"`, `"oauth2"`, `"mtls"`). |
+| `oauth2` | object \| null | OAuth2 configuration if applicable. |
+| `oauth2.token_url` | string | Token endpoint URL. |
+| `oauth2.scopes` | array[string] | Available OAuth2 scopes. |
+
+### 5.9 Rate Limits (`RateLimitInfo`)
+
+Agents SHOULD declare their rate limits and quota information in the status response to enable clients to self-regulate and avoid `429` responses.
+
+```json
+{
+  "rate_limits": {
+    "max_requests_per_minute": 60,
+    "max_requests_per_day": 10000,
+    "max_concurrent_tasks": 5,
+    "remaining_requests": 42,
+    "remaining_tasks": 3,
+    "reset_at": "2026-03-12T11:00:00Z"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_requests_per_minute` | integer \| null | Maximum `POST /v1/aip` requests per minute. `null` = unlimited. |
+| `max_requests_per_day` | integer \| null | Maximum requests per calendar day (UTC). `null` = unlimited. |
+| `max_concurrent_tasks` | integer \| null | Maximum simultaneous tasks in non-terminal state. `null` = unlimited. |
+| `remaining_requests` | integer \| null | Remaining requests in the current minute window. |
+| `remaining_tasks` | integer \| null | Remaining task slots available. |
+| `reset_at` | string \| null | ISO 8601 UTC timestamp when the rate limit window resets. |
+
+**HTTP Response Headers:**
+
+When rate limiting is active, servers MUST include these response headers on `429` responses:
+
+| Header | Example | Description |
+|--------|---------|-------------|
+| `Retry-After` | `30` | Seconds until the client may retry. |
+| `X-RateLimit-Limit` | `60` | Request limit for the current window. |
+| `X-RateLimit-Remaining` | `0` | Remaining requests in the current window. |
+| `X-RateLimit-Reset` | `1741777200` | Unix timestamp when the window resets. |
+
+Servers SHOULD include `X-RateLimit-*` headers on all `200` responses as well, to enable proactive client-side throttling.
+
 ---
 
-## 6. Governance
+## 6. Task Lifecycle
 
-### 6.1 Approval Workflow
+### 6.1 Overview
+
+AIP provides a **first-class Task model** for managing long-running agent work. When a client sends a message via `POST /v1/aip`, the server MAY create a `Task` to track execution. Tasks have their own lifecycle, independent of individual messages.
+
+### 6.2 Task States
+
+```
+submitted ──→ working ──→ completed
+                │              
+                ├──→ input-required ──→ working
+                │
+                ├──→ failed
+                │
+                └──→ canceled
+```
+
+| State | Description |
+|-------|-------------|
+| `submitted` | Task received but not yet started. |
+| `working` | Agent is actively executing the task. |
+| `input-required` | Agent needs additional input from the sender before continuing. |
+| `completed` | Task finished successfully. |
+| `failed` | Task failed (see `error_code` and `error_message`). |
+| `canceled` | Task was canceled by the sender or a supervisor. |
+
+### 6.3 Task Object (`AIPTask`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `task_id` | string | REQUIRED | Globally unique task identifier. |
+| `message_id` | string | REQUIRED | The originating message that created this task. |
+| `state` | string | REQUIRED | Current task state (see 6.2). |
+| `from` | string | REQUIRED | Agent/user that initiated the task. |
+| `to` | string | REQUIRED | Agent responsible for executing the task. |
+| `action` | string | REQUIRED | The action being performed. |
+| `intent` | string | REQUIRED | Human-readable description of the task. |
+| `progress` | number \| null | OPTIONAL | Progress indicator (0.0 to 1.0). |
+| `artifacts` | array[Artifact] | OPTIONAL | Artifacts produced by the task (see 6.5). |
+| `history` | array[AIPMessage] | OPTIONAL | Ordered list of messages exchanged within this task context. |
+| `error_code` | string \| null | OPTIONAL | Machine-readable error code (if `state` is `"failed"`). |
+| `error_message` | string \| null | OPTIONAL | Human-readable error (if `state` is `"failed"`). |
+| `metadata` | object \| null | OPTIONAL | Implementation-specific metadata. |
+| `created_at` | string | REQUIRED | ISO 8601 UTC timestamp. |
+| `updated_at` | string | REQUIRED | ISO 8601 UTC timestamp. |
+
+### 6.4 Task Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST /v1/aip` | Create task | Sending a message MAY implicitly create a task. The `AIPAck` includes `task_id`. |
+| `GET /v1/tasks/{task_id}` | Get task | Retrieve full task state, artifacts, and history. |
+| `POST /v1/tasks/{task_id}/cancel` | Cancel task | Request cancellation. Server responds with updated task. |
+| `POST /v1/tasks/{task_id}/send` | Send into task | Send a follow-up message within an existing task context (e.g., answer `input-required`). |
+
+**GET /v1/tasks/{task_id} response:**
+
+```json
+{
+  "task_id": "task-001",
+  "message_id": "msg-001",
+  "state": "working",
+  "from": "user",
+  "to": "agent-backend",
+  "action": "assign_task",
+  "intent": "Design the order service REST API",
+  "progress": 0.45,
+  "artifacts": [],
+  "history": [],
+  "created_at": "2026-03-12T10:00:00Z",
+  "updated_at": "2026-03-12T10:05:00Z"
+}
+```
+
+**Cancellation:**
+
+```http
+POST /v1/tasks/task-001/cancel
+```
+
+Response: The updated `AIPTask` with `"state": "canceled"`.
+
+### 6.5 Artifacts
+
+Tasks MAY produce **artifacts** — files, documents, or structured data generated during execution.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `artifact_id` | string | REQUIRED | Unique artifact identifier. |
+| `name` | string | REQUIRED | Human-readable name (e.g., `"orders-api.yaml"`). |
+| `description` | string \| null | OPTIONAL | Description of the artifact. |
+| `mime_type` | string | REQUIRED | MIME type (e.g., `"application/yaml"`, `"text/plain"`, `"image/png"`). |
+| `uri` | string \| null | OPTIONAL | URI to fetch the artifact content. |
+| `inline_data` | string \| null | OPTIONAL | Base64-encoded inline content (for small artifacts). |
+| `metadata` | object \| null | OPTIONAL | Additional metadata. |
+
+Exactly one of `uri` or `inline_data` MUST be present. Servers SHOULD use `uri` for artifacts larger than 1 MB.
+
+### 6.6 AIPAck with Task ID
+
+When a task is created, the `AIPAck` MUST include the `task_id`:
+
+```json
+{
+  "ok": true,
+  "message_id": "msg-001",
+  "to": "agent-backend",
+  "status": "received",
+  "task_id": "task-001"
+}
+```
+
+---
+
+## 7. Governance
+
+### 7.1 Approval Workflow
 
 AIP provides first-class support for human-in-the-loop governance:
 
@@ -317,7 +666,7 @@ AIP provides first-class support for human-in-the-loop governance:
 - Agents MUST NOT execute production-impacting actions unless `approval_state` is `"approved"`.
 - The `approval_state` field tracks the lifecycle: `"not_required"` → `"waiting_human"` → `"approved"` | `"rejected"`.
 
-### 6.2 Authority Weight
+### 7.2 Authority Weight
 
 The `authority_weight` field (0-100) represents organizational authority. It is advisory, not enforced by the protocol, but implementations MAY use it for:
 
@@ -327,9 +676,9 @@ The `authority_weight` field (0-100) represents organizational authority. It is 
 
 ---
 
-## 7. Reliability
+## 8. Reliability
 
-### 7.1 Retry Semantics
+### 8.1 Retry Semantics
 
 Implementations SHOULD retry on transient failures (5xx, timeout, connection errors) with exponential backoff and jitter. Implementations MUST NOT retry on 4xx client errors.
 
@@ -343,23 +692,165 @@ Implementations SHOULD retry on transient failures (5xx, timeout, connection err
 | Backoff max | 60.0 seconds |
 | Backoff jitter | ±20% |
 
-### 7.2 Idempotency
+### 8.2 Idempotency
 
-Senders MAY include an `Idempotency-Key` HTTP header or an idempotency key in the payload. Receivers SHOULD use this to deduplicate messages.
+AIP defines a standard idempotency mechanism to prevent duplicate processing of messages, following the patterns established by Stripe, IETF draft-ietf-httpapi-idempotency-key-header, and other production-grade APIs.
 
-### 7.3 Message Persistence
+#### 8.2.1 The `Idempotency-Key` Header
+
+| Aspect | Specification |
+|--------|---------------|
+| **Header name** | `Idempotency-Key` |
+| **Format** | UUID v4 string (e.g., `"550e8400-e29b-41d4-a716-446655440000"`) |
+| **Scope** | Per client-server pair. The same key from different clients MAY map to different operations. |
+| **Required?** | OPTIONAL for senders. Servers SHOULD support it. |
+
+#### 8.2.2 Server Behavior
+
+When a server receives a request with an `Idempotency-Key` header:
+
+1. **First request:** Process normally. Store the response keyed by `(client_id, idempotency_key)` with the original request fingerprint (hash of method + path + body).
+2. **Duplicate request (same key, same body):** Return the stored response with HTTP `200` and the header `Idempotency-Replayed: true`. Do NOT re-execute the action.
+3. **Conflicting request (same key, different body):** Return HTTP `409 Conflict` with error code `aip/protocol/idempotency_conflict`.
+4. **Concurrent request (same key, original still processing):** Return HTTP `409 Conflict` with error code `aip/protocol/idempotency_concurrent`. The client SHOULD wait and retry.
+
+#### 8.2.3 Key Lifetime
+
+- Servers MUST retain idempotency records for at least **24 hours**.
+- Servers SHOULD retain records for **72 hours** in production deployments.
+- Servers MAY discard records after the retention period. A replayed key after expiry is treated as a new request.
+- Servers SHOULD include the `Idempotency-Key-Expiry` response header (ISO 8601 UTC) to indicate when the key record will expire.
+
+#### 8.2.4 Response Headers
+
+| Header | Example | Description |
+|--------|---------|-------------|
+| `Idempotency-Key` | `550e8400-...` | Echoed from the request. |
+| `Idempotency-Replayed` | `true` | Present only when the response is a replay of a previous request. |
+| `Idempotency-Key-Expiry` | `2026-03-15T10:00:00Z` | When this idempotency record expires. |
+
+#### 8.2.5 Client Behavior
+
+- Clients SHOULD generate a new UUID v4 for each logically distinct request.
+- Clients MUST reuse the same `Idempotency-Key` when retrying a failed request.
+- Clients MUST NOT reuse an `Idempotency-Key` for a logically different request.
+- The SDK `SendParams.idempotency_key` field maps directly to this header.
+
+### 8.3 Message Persistence
 
 Receivers SHOULD persist all incoming AIP messages to a durable log (e.g., JSONL file, database) for auditability and replay.
 
 ---
 
-## 8. Observability
+## 9. Error Codes
 
-### 8.1 Distributed Tracing
+### 9.1 Standard Error Code Registry
+
+AIP defines a standard error code registry using the `aip/` namespace. Implementations MUST use these codes for the corresponding error conditions. The `error_code` field in messages, tasks, and SSE error events MUST use codes from this registry for standard conditions.
+
+Error codes follow the format: `aip/<category>/<error_name>`
+
+#### 9.1.1 Protocol Errors (`aip/protocol/`)
+
+Errors in the protocol layer — addressing, routing, version mismatches.
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/protocol/invalid_version` | 422 | The `version` field does not match the URL path version. |
+| `aip/protocol/unsupported_version` | 422 | The protocol version is not supported by this agent. |
+| `aip/protocol/invalid_message` | 422 | The message does not conform to the AIP schema. |
+| `aip/protocol/routing_failed` | 400 | The `to` field does not match this agent and cannot be forwarded. |
+| `aip/protocol/agent_not_found` | 404 | The target agent does not exist. |
+| `aip/protocol/agent_unavailable` | 503 | The target agent is temporarily unavailable. |
+
+#### 9.1.2 Execution Errors (`aip/execution/`)
+
+Errors during action execution — invalid actions, task failures, input problems.
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/execution/unknown_action` | 422 | The `action` is not recognized by this agent. |
+| `aip/execution/invalid_payload` | 422 | The `payload` does not match the expected schema for this action. |
+| `aip/execution/task_failed` | 200* | The task encountered an unrecoverable error during execution. |
+| `aip/execution/task_timeout` | 200* | The task exceeded the maximum execution time. |
+| `aip/execution/task_not_found` | 404 | The referenced task does not exist. |
+| `aip/execution/task_not_cancelable` | 409 | The task is in a terminal state and cannot be canceled. |
+| `aip/execution/capacity_exceeded` | 429 | The agent has reached its maximum concurrent task capacity. |
+| `aip/execution/input_required` | 200* | The task requires additional input to continue. |
+
+*\* These codes appear in the `error_code` field of a task or SSE event, not as HTTP status codes.*
+
+#### 9.1.3 Governance Errors (`aip/governance/`)
+
+Errors related to authority, approval, and policy constraints.
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/governance/authority_insufficient` | 403 | The sender's `authority_weight` is below the required threshold. |
+| `aip/governance/approval_required` | 403 | This action requires approval (`requires_approval: true`) but `approval_state` is not `"approved"`. |
+| `aip/governance/approval_rejected` | 403 | The approval request was explicitly rejected. |
+| `aip/governance/constraint_violated` | 422 | One or more `constraints` cannot be satisfied. |
+| `aip/governance/policy_denied` | 403 | A policy rule prevents this action from being executed. |
+
+#### 9.1.4 Authentication & Authorization Errors (`aip/auth/`)
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/auth/unauthenticated` | 401 | No valid credentials provided. |
+| `aip/auth/unauthorized` | 403 | Valid credentials but insufficient permissions. |
+| `aip/auth/token_expired` | 401 | The authentication token has expired. |
+| `aip/auth/invalid_token` | 401 | The authentication token is malformed or invalid. |
+
+#### 9.1.5 Rate Limiting Errors (`aip/ratelimit/`)
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/ratelimit/exceeded` | 429 | Request rate limit exceeded. See `Retry-After` header. |
+| `aip/ratelimit/quota_exhausted` | 429 | Usage quota for the current period is exhausted. |
+
+### 9.2 Custom Error Codes
+
+Implementations MAY define custom error codes using a namespaced prefix:
+
+```
+x-<organization>/<category>/<error_name>
+```
+
+Example: `x-acme/billing/credits_exhausted`
+
+Custom error codes MUST NOT use the `aip/` prefix.
+
+### 9.3 Error Response Format
+
+When returning an error in a non-streaming response (HTTP 4xx/5xx), the response body SHOULD follow this format:
+
+```json
+{
+  "ok": false,
+  "error_code": "aip/governance/authority_insufficient",
+  "error_message": "Authority weight 30 is below the required threshold of 80 for action 'assign_task'.",
+  "message_id": "msg-001",
+  "to": "agent-backend",
+  "status": "rejected"
+}
+```
+
+For streaming responses, errors are delivered as SSE events:
+
+```
+event: error
+data: {"error_code":"aip/execution/task_failed","error_message":"Compilation failed with 3 errors"}
+```
+
+---
+
+## 10. Observability
+
+### 10.1 Distributed Tracing
 
 AIP messages carry `trace_id` and `correlation_id` fields for end-to-end tracing. Implementations SHOULD propagate these fields through all downstream messages and log entries.
 
-### 8.2 Logging
+### 10.2 Logging
 
 Implementations SHOULD log:
 - Message send/receive events with `message_id`, `action`, and `trace_id`.
@@ -370,31 +861,50 @@ The protocol library SHOULD expose hooks for custom loggers and structured log f
 
 ---
 
-## 9. Versioning and Evolution
+## 11. Versioning and Evolution
 
-### 9.1 Version Format
+### 11.1 Version Format
 
 Protocol versions follow semantic versioning: `MAJOR.MINOR`.
 
-- **MAJOR** version changes indicate breaking changes.
-- **MINOR** version changes are backward-compatible additions.
+- **MAJOR** version changes indicate breaking changes and a new URL path prefix (e.g., `/v2`).
+- **MINOR** version changes are backward-compatible additions within the same URL path.
 
-### 9.2 Compatibility Rules
+### 11.2 URL Path Versioning
+
+The protocol uses URL path versioning as the primary version indicator (see Section 2.2). The URL path version (`/v1`) and the envelope `version` field (`"1.0"`) MUST be consistent:
+
+| URL Path | Envelope `version` | Valid? |
+|----------|-------------------|--------|
+| `/v1/aip` | `"1.0"` | Yes |
+| `/v1/aip` | `"1.1"` | Yes (minor upgrade, same major) |
+| `/v1/aip` | `"2.0"` | No — MUST use `/v2/aip` |
+
+### 11.3 Compatibility Rules
 
 - New fields MUST be OPTIONAL with sensible defaults.
 - New actions MUST NOT change the semantics of existing actions.
 - Receivers MUST ignore unknown fields (forward compatibility).
 - Receivers SHOULD NOT reject messages with unknown actions; they MAY respond with an appropriate error in the `AIPAck`.
 
-### 9.3 Version Negotiation
+### 11.4 Version Negotiation
 
-Agents SHOULD declare `supported_versions` in their status response. Senders SHOULD use the highest mutually supported version. If version negotiation is not performed, version `"1.0"` is assumed.
+Agents SHOULD declare `supported_versions` in their status response. Senders SHOULD use the highest mutually supported version. If version negotiation is not performed, version `"1.0"` (path `/v1`) is assumed.
+
+### 11.5 Deprecation Policy
+
+When a new major version is introduced:
+
+1. The previous version SHOULD remain available for at least **12 months**.
+2. Servers SHOULD include a `Deprecation` response header (RFC 8594) on deprecated version endpoints.
+3. After the deprecation period, servers SHOULD return HTTP `410 Gone` with a JSON body indicating the migration path.
+4. The `GET /v1/status` response SHOULD include a `deprecation_notice` field in `metadata` when the version is deprecated.
 
 ---
 
-## 10. Extension Mechanism
+## 12. Extension Mechanism
 
-### 10.1 Custom Actions
+### 12.1 Custom Actions
 
 Implementations MAY define custom actions using a namespaced prefix:
 
@@ -406,19 +916,19 @@ Example: `x-acme/deploy_canary`
 
 Custom actions MUST NOT collide with standard actions defined in Section 4.2.
 
-### 10.2 Custom Fields
+### 12.2 Custom Fields
 
 Implementations MAY add custom fields to `payload` or `metadata` objects. Top-level message fields MUST NOT be extended outside the specification process.
 
-### 10.3 Custom Status Fields
+### 12.3 Custom Status Fields
 
 Agents MAY include additional fields in `AgentStatus.metadata` for implementation-specific data.
 
 ---
 
-## 11. Security Considerations
+## 13. Security Considerations
 
-### 11.1 Authentication
+### 13.1 Authentication
 
 AIP does not mandate a specific authentication mechanism. Implementations SHOULD support at least one of:
 
@@ -426,7 +936,7 @@ AIP does not mandate a specific authentication mechanism. Implementations SHOULD
 - Mutual TLS (mTLS)
 - Custom authentication header
 
-### 11.2 Authorization
+### 13.2 Authorization
 
 Implementations SHOULD enforce authorization based on:
 
@@ -434,18 +944,18 @@ Implementations SHOULD enforce authorization based on:
 - `authority_weight` relative to the action's requirements
 - `approval_state` for governed actions
 
-### 11.3 Input Validation
+### 13.3 Input Validation
 
 Implementations MUST validate all incoming messages against the AIP schema before processing. Messages that fail validation MUST be rejected with HTTP 422.
 
 ---
 
-## 12. Examples
+## 14. Examples
 
-### 12.1 User Sends Instruction to Coordinator
+### 14.1 User Sends Instruction to Coordinator
 
 ```http
-POST https://coordinator.example.com/aip
+POST https://coordinator.example.com/v1/aip
 Content-Type: application/json
 ```
 
@@ -478,10 +988,10 @@ Content-Type: application/json
 }
 ```
 
-### 12.2 Coordinator Assigns Task to Worker
+### 14.2 Coordinator Assigns Task to Worker
 
 ```http
-POST https://agent-backend.example.com/aip
+POST https://agent-backend.example.com/v1/aip
 Content-Type: application/json
 ```
 
@@ -509,7 +1019,7 @@ Content-Type: application/json
 }
 ```
 
-### 12.3 Worker Submits Report
+### 14.3 Worker Submits Report
 
 ```json
 {
@@ -531,7 +1041,7 @@ Content-Type: application/json
 }
 ```
 
-### 12.4 Cross-Host Communication
+### 14.4 Cross-Host Communication
 
 ```json
 {
@@ -549,10 +1059,10 @@ Content-Type: application/json
 }
 ```
 
-### 12.5 Agent Status Response
+### 14.5 Agent Status Response
 
 ```http
-GET https://agent-backend.example.com/status
+GET https://agent-backend.example.com/v1/status
 ```
 
 ```json
@@ -565,8 +1075,8 @@ GET https://agent-backend.example.com/status
   "ok": true,
   "base_url": "https://agent-backend.example.com",
   "endpoints": {
-    "aip": "https://agent-backend.example.com/aip",
-    "status": "https://agent-backend.example.com/status"
+    "aip": "https://agent-backend.example.com/v1/aip",
+    "status": "https://agent-backend.example.com/v1/status"
   },
   "capabilities": ["assign_task", "submit_report", "request_context"],
   "supported_versions": ["1.0"],
@@ -588,7 +1098,120 @@ Machine-readable JSON Schema files for all protocol types are available in the `
 - `ack.schema.json` — AIPAck
 - `status.schema.json` — AgentStatus, RecursiveStatusNode, GroupStatus
 
-## Appendix B: Relationship to Other Protocols
+## Appendix B: JSON-RPC 2.0 Compatibility Bridge
+
+AIP uses a custom four-layer envelope rather than JSON-RPC 2.0. However, for interoperability with A2A and other JSON-RPC-based systems, AIP defines a standard bidirectional mapping.
+
+### B.1 AIP → JSON-RPC 2.0
+
+An AIP message maps to a JSON-RPC 2.0 request as follows:
+
+| AIP Field | JSON-RPC 2.0 Field | Mapping |
+|-----------|-------------------|---------|
+| (constant) | `jsonrpc` | Always `"2.0"` |
+| `message_id` | `id` | Direct mapping |
+| `action` | `method` | `"aip/{action}"` (e.g., `"aip/assign_task"`) |
+| All other fields | `params` | Nested as a single `params` object |
+
+**Example:**
+
+AIP message:
+```json
+{
+  "version": "1.0",
+  "message_id": "msg-001",
+  "from": "user",
+  "to": "agent-backend",
+  "action": "assign_task",
+  "intent": "Design the API",
+  "authority_weight": 80
+}
+```
+
+Mapped JSON-RPC 2.0:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "msg-001",
+  "method": "aip/assign_task",
+  "params": {
+    "version": "1.0",
+    "from": "user",
+    "to": "agent-backend",
+    "intent": "Design the API",
+    "authority_weight": 80
+  }
+}
+```
+
+### B.2 JSON-RPC 2.0 → AIP
+
+| JSON-RPC 2.0 Field | AIP Field | Mapping |
+|-------------------|-----------|---------|
+| `id` | `message_id` | Direct mapping |
+| `method` | `action` | Strip `"aip/"` prefix |
+| `params.*` | Top-level fields | Flatten into AIP envelope |
+
+### B.3 AIPAck → JSON-RPC 2.0 Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "msg-001",
+  "result": {
+    "ok": true,
+    "to": "agent-backend",
+    "status": "received",
+    "task_id": "task-001"
+  }
+}
+```
+
+### B.4 Error → JSON-RPC 2.0 Error
+
+AIP error codes map to JSON-RPC 2.0 error codes:
+
+| AIP Error Category | JSON-RPC Code | JSON-RPC Message |
+|-------------------|--------------|-----------------|
+| `aip/protocol/invalid_message` | `-32600` | Invalid Request |
+| `aip/execution/unknown_action` | `-32601` | Method not found |
+| `aip/execution/invalid_payload` | `-32602` | Invalid params |
+| `aip/protocol/*` (other) | `-32600` | Invalid Request |
+| `aip/execution/*` (other) | `-32000` | Server error |
+| `aip/governance/*` | `-32001` | Governance error |
+| `aip/auth/*` | `-32002` | Authentication error |
+
+The `data` field of the JSON-RPC error object carries the full AIP error details:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "msg-001",
+  "error": {
+    "code": -32001,
+    "message": "Governance error",
+    "data": {
+      "error_code": "aip/governance/authority_insufficient",
+      "error_message": "Authority weight 30 is below threshold 80"
+    }
+  }
+}
+```
+
+### B.5 Bridge Implementation
+
+SDK implementations SHOULD provide a bridge module that:
+
+1. Accepts incoming JSON-RPC 2.0 requests and converts them to `AIPMessage` objects.
+2. Converts outgoing `AIPAck` / `AIPTask` to JSON-RPC 2.0 responses.
+3. Handles JSON-RPC batch requests (`[{...}, {...}]`) by mapping to `send_batch`.
+4. Passes through JSON-RPC notifications (no `id`) as fire-and-forget AIP messages.
+
+This enables an AIP agent to serve both native AIP clients and JSON-RPC 2.0 clients (including A2A) on the same endpoint by content-sniffing the `jsonrpc` field.
+
+## Appendix C: Relationship to Other Protocols
+
+(See also Appendix B for JSON-RPC 2.0 interoperability.)
 
 | Protocol | Focus | Relationship to AIP |
 |----------|-------|---------------------|
@@ -596,7 +1219,10 @@ Machine-readable JSON Schema files for all protocol types are available in the `
 | **A2A** (Google Agent-to-Agent) | Agent-to-agent task delegation | Overlapping scope. AIP additionally provides governance, recursive status, and organizational authority. |
 | **OpenAI Realtime API** | Model ↔ User streaming | Complementary. AIP is for agent-to-agent; OpenAI Realtime is for user-to-model. |
 
-## Appendix C: Reference Implementations
+## Appendix D: Reference Implementations
 
-- **Python SDK**: `aip-sdk-python` — reference implementation with sync/async clients
+- **Python SDK**: `sdk-python/` — reference implementation with sync/async/streaming clients
+- **Go SDK**: `sdk-go/` — Go implementation with streaming and task management
+- **Java SDK**: `sdk-java/` — Java implementation with streaming and task management
+- **JS/TS SDK**: `sdk-js/` — JavaScript/TypeScript implementation with streaming and task management
 - **Ants**: Multi-agent runtime built on AIP — full reference coordinator/worker system

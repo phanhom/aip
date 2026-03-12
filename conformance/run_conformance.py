@@ -6,12 +6,13 @@ Validates that a target server correctly implements the Agent Interaction Protoc
 Usage:
     pip install httpx
     python run_conformance.py --target http://localhost:8000
+    python run_conformance.py --target http://localhost:8000 --api-version v1
 
 Tests:
-    1. GET /status returns valid AgentStatus
-    2. POST /aip accepts a valid message and returns AIPAck
-    3. POST /aip rejects malformed messages with 422
-    4. POST /aip with wrong "to" returns 400
+    1. GET /v1/status returns valid AgentStatus
+    2. POST /v1/aip accepts a valid message and returns AIPAck
+    3. POST /v1/aip rejects malformed messages with 422
+    4. POST /v1/aip with wrong "to" returns 400
     5. Status response includes discovery endpoints
 """
 
@@ -47,10 +48,10 @@ def make_message(to: str, action: str = "request_context") -> dict:
     }
 
 
-def test_status(client: httpx.Client, base: str) -> dict | None:
-    """Test 1: GET /status returns valid AgentStatus."""
+def test_status(client: httpx.Client, base: str, api_version: str) -> dict | None:
+    """Test 1: GET /v1/status returns valid AgentStatus."""
     try:
-        r = client.get(f"{base}/status")
+        r = client.get(f"{base}/{api_version}/status")
         if r.status_code != 200:
             log(FAIL, "GET /status", f"Expected 200, got {r.status_code}")
             return None
@@ -58,61 +59,61 @@ def test_status(client: httpx.Client, base: str) -> dict | None:
         required = ["agent_id", "role"]
         missing = [f for f in required if f not in data]
         if missing:
-            log(FAIL, "GET /status", f"Missing required fields: {missing}")
+            log(FAIL, f"GET /{api_version}/status", f"Missing required fields: {missing}")
             return None
-        log(PASS, "GET /status", f"agent_id={data['agent_id']} role={data['role']}")
+        log(PASS, f"GET /{api_version}/status", f"agent_id={data['agent_id']} role={data['role']}")
         return data
     except Exception as e:
-        log(FAIL, "GET /status", str(e))
+        log(FAIL, f"GET /{api_version}/status", str(e))
         return None
 
 
-def test_send_valid(client: httpx.Client, base: str, agent_id: str):
-    """Test 2: POST /aip accepts valid message."""
+def test_send_valid(client: httpx.Client, base: str, agent_id: str, api_version: str):
+    """Test 2: POST /v1/aip accepts valid message."""
     msg = make_message(to=agent_id)
     try:
-        r = client.post(f"{base}/aip", json=msg)
+        r = client.post(f"{base}/{api_version}/aip", json=msg)
         if r.status_code != 200:
-            log(FAIL, "POST /aip (valid)", f"Expected 200, got {r.status_code}: {r.text[:200]}")
+            log(FAIL, "POST /v1/aip (valid)", f"Expected 200, got {r.status_code}: {r.text[:200]}")
             return
         ack = r.json()
         if not ack.get("ok"):
-            log(FAIL, "POST /aip (valid)", f"ack.ok is not true: {ack}")
+            log(FAIL, "POST /v1/aip (valid)", f"ack.ok is not true: {ack}")
             return
         if ack.get("message_id") != msg["message_id"]:
-            log(FAIL, "POST /aip (valid)", "ack.message_id does not match request")
+            log(FAIL, "POST /v1/aip (valid)", "ack.message_id does not match request")
             return
-        log(PASS, "POST /aip (valid)", f"status={ack.get('status')}")
+        log(PASS, "POST /v1/aip (valid)", f"status={ack.get('status')}")
     except Exception as e:
-        log(FAIL, "POST /aip (valid)", str(e))
+        log(FAIL, "POST /v1/aip (valid)", str(e))
 
 
-def test_send_malformed(client: httpx.Client, base: str):
-    """Test 3: POST /aip rejects malformed message with 422."""
+def test_send_malformed(client: httpx.Client, base: str, api_version: str):
+    """Test 3: POST /v1/aip rejects malformed message with 422."""
     bad = {"version": "1.0", "message_id": str(uuid4())}
     try:
-        r = client.post(f"{base}/aip", json=bad)
+        r = client.post(f"{base}/{api_version}/aip", json=bad)
         if r.status_code == 422:
-            log(PASS, "POST /aip (malformed)", "Correctly rejected with 422")
+            log(PASS, "POST /v1/aip (malformed)", "Correctly rejected with 422")
         else:
-            log(FAIL, "POST /aip (malformed)", f"Expected 422, got {r.status_code}")
+            log(FAIL, "POST /v1/aip (malformed)", f"Expected 422, got {r.status_code}")
     except Exception as e:
-        log(FAIL, "POST /aip (malformed)", str(e))
+        log(FAIL, "POST /v1/aip (malformed)", str(e))
 
 
-def test_send_wrong_target(client: httpx.Client, base: str):
-    """Test 4: POST /aip with wrong 'to' returns 400."""
+def test_send_wrong_target(client: httpx.Client, base: str, api_version: str):
+    """Test 4: POST /v1/aip with wrong 'to' returns 400."""
     msg = make_message(to="nonexistent-agent-xyz-12345")
     try:
-        r = client.post(f"{base}/aip", json=msg)
+        r = client.post(f"{base}/{api_version}/aip", json=msg)
         if r.status_code == 400:
-            log(PASS, "POST /aip (wrong target)", "Correctly rejected with 400")
+            log(PASS, "POST /v1/aip (wrong target)", "Correctly rejected with 400")
         elif r.status_code == 200:
-            log(SKIP, "POST /aip (wrong target)", "Server accepted (may support broadcast)")
+            log(SKIP, "POST /v1/aip (wrong target)", "Server accepted (may support broadcast)")
         else:
-            log(FAIL, "POST /aip (wrong target)", f"Expected 400, got {r.status_code}")
+            log(FAIL, "POST /v1/aip (wrong target)", f"Expected 400, got {r.status_code}")
     except Exception as e:
-        log(FAIL, "POST /aip (wrong target)", str(e))
+        log(FAIL, "POST /v1/aip (wrong target)", str(e))
 
 
 def test_status_discovery(status: dict):
@@ -130,21 +131,23 @@ def main():
     parser = argparse.ArgumentParser(description="AIP Conformance Test Suite")
     parser.add_argument("--target", required=True, help="Base URL of the AIP agent to test")
     parser.add_argument("--timeout", type=float, default=10.0, help="Request timeout in seconds")
+    parser.add_argument("--api-version", default="v1", help="API version prefix (default: v1)")
     args = parser.parse_args()
 
     base = args.target.rstrip("/")
-    print(f"\nAIP Conformance Tests — target: {base}\n")
+    api_ver = args.api_version.strip("/")
+    print(f"\nAIP Conformance Tests — target: {base}/{api_ver}\n")
 
     with httpx.Client(timeout=args.timeout) as client:
-        status = test_status(client, base)
+        status = test_status(client, base, api_ver)
         if status is None:
-            print("\nGET /status failed — cannot continue.\n")
+            print(f"\nGET /{api_ver}/status failed — cannot continue.\n")
             sys.exit(1)
 
         agent_id = status["agent_id"]
-        test_send_valid(client, base, agent_id)
-        test_send_malformed(client, base)
-        test_send_wrong_target(client, base)
+        test_send_valid(client, base, agent_id, api_ver)
+        test_send_malformed(client, base, api_ver)
+        test_send_wrong_target(client, base, api_ver)
         test_status_discovery(status)
 
     print("\nDone.\n")
