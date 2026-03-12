@@ -192,6 +192,33 @@ type Artifact struct {
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// Provider identifies the organization or individual operating an agent.
+type Provider struct {
+	Name string `json:"name"`
+	URL  string `json:"url,omitempty"`
+}
+
+// Presentation holds human-facing display metadata for dashboards, agent cards, and marketplace UIs.
+type Presentation struct {
+	DisplayName      string   `json:"display_name"`
+	Tagline          string   `json:"tagline,omitempty"`
+	Description      string   `json:"description,omitempty"`
+	IconURL          string   `json:"icon_url,omitempty"`
+	Color            string   `json:"color,omitempty"`
+	Locale           string   `json:"locale,omitempty"`
+	Categories       []string `json:"categories,omitempty"`
+	HomepageURL      string   `json:"homepage_url,omitempty"`
+	PrivacyPolicyURL string   `json:"privacy_policy_url,omitempty"`
+	TosURL           string   `json:"tos_url,omitempty"`
+	Provider         *Provider `json:"provider,omitempty"`
+}
+
+// AuthenticationInfo describes authentication schemes supported by an agent.
+type AuthenticationInfo struct {
+	Schemes []string               `json:"schemes,omitempty"`
+	OAuth2  map[string]interface{} `json:"oauth2,omitempty"`
+}
+
 // Skill describes an agent capability with input/output schemas.
 type Skill struct {
 	ID           string                 `json:"id"`
@@ -215,6 +242,8 @@ type StatusEndpoints struct {
 type AgentStatus struct {
 	AgentID            string                 `json:"agent_id"`
 	Role               string                 `json:"role"`
+	Namespace          string                 `json:"namespace,omitempty"`
+	Presentation       *Presentation          `json:"presentation,omitempty"`
 	Superior           string                 `json:"superior,omitempty"`
 	AuthorityWeight    *int                   `json:"authority_weight,omitempty"`
 	Lifecycle          string                 `json:"lifecycle,omitempty"`
@@ -225,7 +254,7 @@ type AgentStatus struct {
 	Capabilities       []string               `json:"capabilities,omitempty"`
 	Skills             []Skill                `json:"skills,omitempty"`
 	SupportedVersions  []string               `json:"supported_versions,omitempty"`
-	Authentication     map[string]interface{} `json:"authentication,omitempty"`
+	Authentication     *AuthenticationInfo    `json:"authentication,omitempty"`
 	RateLimits         *RateLimitInfo         `json:"rate_limits,omitempty"`
 	PendingTasks       int                    `json:"pending_tasks,omitempty"`
 	RecentErrors       int                    `json:"recent_errors,omitempty"`

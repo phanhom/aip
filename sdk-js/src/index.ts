@@ -19,6 +19,8 @@ export {
   type Artifact,
   type Authentication,
   type OAuth2Config,
+  type Presentation,
+  type Provider,
   type RateLimitInfo,
   type Skill,
   type SSEEvent,

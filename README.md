@@ -45,6 +45,8 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 | `GET /v1/tasks/{id}` | Query task state, progress, and artifacts |
 | `POST /v1/tasks/{id}/cancel` | Cancel a running task |
 | `POST /v1/tasks/{id}/send` | Send follow-up input into a task |
+| `POST /v1/artifacts` | Upload a file (multipart/form-data, any type/size) |
+| `GET /v1/artifacts/{id}` | Download artifact content |
 
 ## Quick Start
 
@@ -172,6 +174,16 @@ Agents describe their capabilities with **structured skills** (aligned with A2A 
 {
   "agent_id": "agent-backend",
   "role": "backend_engineer",
+  "namespace": "acme-corp",
+  "presentation": {
+    "display_name": "Backend Engineer",
+    "tagline": "Designs and reviews REST APIs with OpenAPI output",
+    "icon_url": "https://cdn.example.com/agents/backend-eng.png",
+    "color": "#4A90D9",
+    "locale": "en",
+    "categories": ["engineering", "backend"],
+    "provider": { "name": "Acme Corp", "url": "https://acme.example.com" }
+  },
   "skills": [
     {
       "id": "api-design",

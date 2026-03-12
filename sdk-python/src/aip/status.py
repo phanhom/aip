@@ -52,6 +52,29 @@ class SkillDescriptor(BaseModel):
     examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class Provider(BaseModel):
+    """Organization or individual that operates an agent."""
+
+    name: str
+    url: str | None = None
+
+
+class Presentation(BaseModel):
+    """Human-facing display metadata for dashboards, agent cards, and marketplace UIs."""
+
+    display_name: str
+    tagline: str | None = Field(default=None, max_length=140)
+    description: str | None = None
+    icon_url: str | None = None
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    locale: str = Field(default="en", pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
+    categories: list[str] = Field(default_factory=list)
+    homepage_url: str | None = None
+    privacy_policy_url: str | None = None
+    tos_url: str | None = None
+    provider: Provider | None = None
+
+
 class AuthenticationInfo(BaseModel):
     """Authentication schemes supported by this agent."""
 
@@ -78,6 +101,8 @@ class AgentStatus(BaseModel):
 
     agent_id: str
     role: str
+    namespace: str | None = None
+    presentation: Presentation | None = None
     superior: str | None = None
     authority_weight: int | None = None
     lifecycle: str | None = None
@@ -111,6 +136,7 @@ class GroupStatus(BaseModel):
 
     ok: bool = True
     service: str = "aip"
+    namespace: str | None = None
     root_agent_id: str
     timestamp: datetime = Field(default_factory=_utc_now)
     topology: dict[str, list[str]] = Field(default_factory=dict)

@@ -9,12 +9,15 @@ import java.util.Map;
 import static com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL;
 
 /**
- * Status document for a single agent. Full status model with skills, authentication, and rate limits.
+ * Status document for a single agent. Full status model with presentation,
+ * namespace, skills, authentication, and rate limits.
  */
 @JsonInclude(NON_NULL)
 public record AgentStatus(
         @JsonProperty("agent_id") String agentId,
         @JsonProperty("role") String role,
+        @JsonProperty("namespace") String namespace,
+        @JsonProperty("presentation") Presentation presentation,
         @JsonProperty("superior") String superior,
         @JsonProperty("authority_weight") Integer authorityWeight,
         @JsonProperty("lifecycle") String lifecycle,

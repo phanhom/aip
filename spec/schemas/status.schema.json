@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aip-protocol.dev/schemas/status.schema.json",
   "title": "AIP Status Protocol Schemas",
-  "description": "Schemas for the AIP status protocol: AgentStatus, RecursiveStatusNode, GroupStatus.",
+  "description": "Schemas for the AIP status protocol: AgentStatus, RecursiveStatusNode, GroupStatus, and supporting types.",
 
   "$defs": {
     "StatusEndpoints": {
@@ -18,6 +18,193 @@
           "type": ["string", "null"],
           "format": "uri",
           "description": "Full URL of the status endpoint (e.g., https://agent.example.com/v1/status)."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "Presentation": {
+      "type": "object",
+      "description": "Human-facing display metadata. Enables dashboards, UIs, and multi-agent platforms to render consistent, localized agent cards without relying on free-form text fields.",
+      "properties": {
+        "display_name": {
+          "type": "string",
+          "description": "Short human-readable name for UI display (e.g., \"Backend Engineer\", \"Code Reviewer\"). Distinct from agent_id which is a machine identifier.",
+          "examples": ["Backend Engineer", "Risk Analyzer", "Deployment Bot"]
+        },
+        "tagline": {
+          "type": ["string", "null"],
+          "description": "One-line summary of what this agent does, suitable for subtitle or tooltip.",
+          "maxLength": 140,
+          "examples": ["Designs and reviews REST APIs with OpenAPI output"],
+          "default": null
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "Longer human-readable description. Markdown MAY be used.",
+          "default": null
+        },
+        "icon_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to an avatar or icon image (SHOULD be square, RECOMMENDED 256×256 minimum).",
+          "default": null
+        },
+        "color": {
+          "type": ["string", "null"],
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "Brand / accent color as a hex string (e.g., \"#4A90D9\"). UIs MAY use this for badges, borders, or status indicators.",
+          "examples": ["#4A90D9", "#34D399", "#F59E0B"],
+          "default": null
+        },
+        "locale": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+          "description": "BCP 47 language tag indicating the locale of all human-readable text in this status response (e.g., \"en\", \"zh-CN\", \"ja\").",
+          "default": "en",
+          "examples": ["en", "zh-CN", "ja", "ko", "fr"]
+        },
+        "categories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "UI categorization labels for marketplace-style discovery (e.g., [\"engineering\", \"backend\"]).",
+          "default": []
+        },
+        "homepage_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to the agent's documentation or homepage.",
+          "default": null
+        },
+        "privacy_policy_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to the agent provider's privacy policy.",
+          "default": null
+        },
+        "tos_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to the agent provider's terms of service.",
+          "default": null
+        },
+        "provider": {
+          "type": ["object", "null"],
+          "description": "Information about the organization or individual that operates this agent.",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Provider / organization name."
+            },
+            "url": {
+              "type": ["string", "null"],
+              "format": "uri"
+            }
+          },
+          "required": ["name"],
+          "default": null
+        }
+      },
+      "required": ["display_name"],
+      "additionalProperties": true
+    },
+
+    "Skill": {
+      "type": "object",
+      "description": "Structured skill descriptor for rich agent discovery. Defines what an agent can do, what it expects, and what it produces.",
+      "required": ["id", "name", "description"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique skill identifier (e.g., \"api-design\", \"code-review\")."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable skill name."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this skill does."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Categorization tags (e.g., [\"backend\", \"api\"]).",
+          "default": []
+        },
+        "input_modes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Accepted input MIME types.",
+          "default": ["application/json"]
+        },
+        "output_modes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Produced output MIME types.",
+          "default": ["application/json"]
+        },
+        "input_schema": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": true },
+            { "type": "null" }
+          ],
+          "description": "JSON Schema describing expected payload structure.",
+          "default": null
+        },
+        "output_schema": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": true },
+            { "type": "null" }
+          ],
+          "description": "JSON Schema describing output payload structure.",
+          "default": null
+        },
+        "examples": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Example input/output pairs for documentation.",
+          "default": []
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "AuthenticationInfo": {
+      "type": "object",
+      "description": "Supported authentication schemes. Enables clients to discover how to authenticate before sending messages.",
+      "properties": {
+        "schemes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "examples": ["bearer", "api_key", "oauth2", "mtls"]
+          },
+          "description": "Supported auth scheme identifiers.",
+          "default": []
+        },
+        "oauth2": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "token_url": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "OAuth2 token endpoint URL."
+                },
+                "scopes": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Available OAuth2 scopes."
+                }
+              },
+              "required": ["token_url"]
+            },
+            { "type": "null" }
+          ],
+          "description": "OAuth2 configuration, if applicable.",
+          "default": null
         }
       },
       "additionalProperties": true
@@ -100,16 +287,30 @@
 
     "AgentStatus": {
       "type": "object",
-      "description": "Status document for a single agent.",
+      "description": "Status document for a single agent. Combines machine-readable discovery with human-facing presentation.",
       "required": ["agent_id", "role"],
       "properties": {
         "agent_id": {
           "type": "string",
-          "description": "Unique identifier for this agent."
+          "description": "Unique machine identifier for this agent."
         },
         "role": {
           "type": "string",
           "description": "Agent's role in the group."
+        },
+        "namespace": {
+          "type": ["string", "null"],
+          "description": "Logical namespace for multi-tenant isolation (e.g., \"acme-corp\", \"team-infra\"). Agents in different namespaces are invisible to each other by default.",
+          "default": null,
+          "examples": ["acme-corp", "team-infra", "prod", "staging"]
+        },
+        "presentation": {
+          "oneOf": [
+            { "$ref": "#/$defs/Presentation" },
+            { "type": "null" }
+          ],
+          "description": "Human-facing display metadata for dashboards, agent cards, and marketplace UIs.",
+          "default": null
         },
         "superior": {
           "type": ["string", "null"],
@@ -156,7 +357,13 @@
         "capabilities": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "List of supported actions or skills.",
+          "description": "List of supported action names (simple discovery).",
+          "default": []
+        },
+        "skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Skill" },
+          "description": "Structured skill descriptors with input/output schemas (rich discovery).",
           "default": []
         },
         "supported_versions": {
@@ -164,6 +371,14 @@
           "items": { "type": "string" },
           "description": "Protocol versions this agent supports.",
           "default": ["1.0"]
+        },
+        "authentication": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuthenticationInfo" },
+            { "type": "null" }
+          ],
+          "description": "Supported authentication schemes.",
+          "default": null
         },
         "rate_limits": {
           "oneOf": [
@@ -250,6 +465,11 @@
           "type": "string",
           "description": "Service identifier.",
           "default": "aip"
+        },
+        "namespace": {
+          "type": ["string", "null"],
+          "description": "Namespace of this agent group.",
+          "default": null
         },
         "root_agent_id": {
           "type": "string",

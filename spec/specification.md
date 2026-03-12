@@ -364,8 +364,10 @@ The scope is specified via query parameter: `GET /v1/status?scope=self`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent_id` | string | REQUIRED | Unique identifier for this agent. |
+| `agent_id` | string | REQUIRED | Unique machine identifier for this agent. |
 | `role` | string | REQUIRED | Agent's role in the group. |
+| `namespace` | string \| null | OPTIONAL | Logical namespace for multi-tenant isolation (e.g., `"acme-corp"`, `"team-infra"`). Agents in different namespaces are invisible to each other by default. Default: `null`. |
+| `presentation` | Presentation \| null | OPTIONAL | Human-facing display metadata for dashboards, agent cards, and marketplace UIs (see 5.10). Default: `null`. |
 | `superior` | string \| null | OPTIONAL | Agent ID of the direct superior. |
 | `authority_weight` | integer \| null | OPTIONAL | Agent's authority weight (0-100). |
 | `lifecycle` | string \| null | OPTIONAL | One of: `"idle"`, `"starting"`, `"running"`, `"blocked"`, `"degraded"`, `"failed"`. |
@@ -421,6 +423,7 @@ For `scope=group`, the response is a flat aggregate:
 |-------|------|-------------|
 | `ok` | boolean | Overall group health. |
 | `service` | string | Service identifier. |
+| `namespace` | string \| null | Namespace of this agent group. Default: `null`. |
 | `root_agent_id` | string | Root coordinator agent ID. |
 | `timestamp` | string | ISO 8601 generation timestamp. |
 | `topology` | object | Map of agent_id to list of direct subordinate IDs. |
@@ -539,6 +542,70 @@ When rate limiting is active, servers MUST include these response headers on `42
 
 Servers SHOULD include `X-RateLimit-*` headers on all `200` responses as well, to enable proactive client-side throttling.
 
+### 5.10 Presentation (`Presentation`)
+
+The `presentation` object provides **human-facing display metadata** for dashboards, agent cards, marketplace UIs, and multi-agent platforms where humans observe and interact with agent networks.
+
+Unlike `agent_id` (a machine identifier) and `role` (an organizational label), `presentation` is explicitly designed for end-user rendering. It enables consistent, localized display across any UI without relying on free-form text fields.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `display_name` | string | REQUIRED | Short human-readable name for UI display (e.g., `"Backend Engineer"`, `"Code Reviewer"`). |
+| `tagline` | string \| null | OPTIONAL | One-line summary of what this agent does, suitable for subtitle or tooltip. Max 140 characters. |
+| `description` | string \| null | OPTIONAL | Longer human-readable description. Markdown MAY be used. |
+| `icon_url` | string \| null | OPTIONAL | URL to an avatar or icon image (SHOULD be square, RECOMMENDED 256×256 minimum). |
+| `color` | string \| null | OPTIONAL | Brand / accent color as a hex string (e.g., `"#4A90D9"`). UIs MAY use this for badges, borders, or status indicators. |
+| `locale` | string | OPTIONAL | BCP 47 language tag indicating the locale of all human-readable text in this status response (e.g., `"en"`, `"zh-CN"`, `"ja"`). Default: `"en"`. |
+| `categories` | array[string] | OPTIONAL | UI categorization labels for marketplace-style discovery (e.g., `["engineering", "backend"]`). |
+| `homepage_url` | string \| null | OPTIONAL | URL to the agent's documentation or homepage. |
+| `privacy_policy_url` | string \| null | OPTIONAL | URL to the agent provider's privacy policy. |
+| `tos_url` | string \| null | OPTIONAL | URL to the agent provider's terms of service. |
+| `provider` | object \| null | OPTIONAL | Information about the organization or individual that operates this agent. Contains `name` (REQUIRED) and `url` (OPTIONAL). |
+
+**Example:**
+
+```json
+{
+  "agent_id": "agent-backend",
+  "role": "backend_engineer",
+  "namespace": "acme-corp",
+  "presentation": {
+    "display_name": "Backend Engineer",
+    "tagline": "Designs and reviews REST APIs with OpenAPI output",
+    "description": "Specialized in designing RESTful APIs, generating OpenAPI specs, and performing security reviews on backend services.",
+    "icon_url": "https://cdn.example.com/agents/backend-eng.png",
+    "color": "#4A90D9",
+    "locale": "en",
+    "categories": ["engineering", "backend", "api"],
+    "homepage_url": "https://docs.example.com/agents/backend",
+    "provider": {
+      "name": "Acme Corp",
+      "url": "https://acme.example.com"
+    }
+  },
+  "lifecycle": "running",
+  "ok": true,
+  "skills": [...]
+}
+```
+
+**Localization:**
+
+- The `locale` field declares the language of all human-readable text in the current status response (`display_name`, `tagline`, `description`, skill `name` and `description`, `error_message`, etc.).
+- Agents that support multiple locales SHOULD accept the standard HTTP `Accept-Language` header on `GET /v1/status` and return the best-matching locale.
+- Agents that do not support locale negotiation MUST return their default locale and declare it in `presentation.locale`.
+
+### 5.11 Namespace
+
+The `namespace` field on `AgentStatus` and `GroupStatus` provides a logical isolation boundary for multi-tenant platforms. It enables a single AIP platform to host agents from different organizations, teams, or environments without collision.
+
+**Rules:**
+
+- Namespace values SHOULD be lowercase alphanumeric with hyphens (e.g., `"acme-corp"`, `"team-infra"`, `"prod"`).
+- Agents with different `namespace` values SHOULD be invisible to each other in discovery (`GET /v1/status?scope=group` or `scope=subtree`) unless the platform explicitly enables cross-namespace visibility.
+- Messages sent across namespaces SHOULD require explicit cross-namespace authorization.
+- If `namespace` is `null`, the agent is in the default namespace.
+
 ---
 
 ## 6. Task Lifecycle
@@ -596,6 +663,8 @@ submitted ──→ working ──→ completed
 | `GET /v1/tasks/{task_id}` | Get task | Retrieve full task state, artifacts, and history. |
 | `POST /v1/tasks/{task_id}/cancel` | Cancel task | Request cancellation. Server responds with updated task. |
 | `POST /v1/tasks/{task_id}/send` | Send into task | Send a follow-up message within an existing task context (e.g., answer `input-required`). |
+| `POST /v1/artifacts` | Upload artifact | Upload a file via multipart/form-data. Returns an `Artifact` with a server-assigned `uri` (see 6.7). |
+| `GET /v1/artifacts/{artifact_id}` | Fetch artifact | Download artifact content. Returns the raw file with the original `Content-Type`. |
 
 **GET /v1/tasks/{task_id} response:**
 
@@ -640,7 +709,57 @@ Tasks MAY produce **artifacts** — files, documents, or structured data generat
 
 Exactly one of `uri` or `inline_data` MUST be present. Servers SHOULD use `uri` for artifacts larger than 1 MB.
 
-### 6.6 AIPAck with Task ID
+### 6.6 Artifact Upload (`POST /v1/artifacts`)
+
+While `inline_data` (base64) is suitable for small payloads, real-world agent workflows produce and consume files of all types and sizes — PDFs, images, datasets, code archives, model weights, etc. AIP provides a **dedicated artifact upload endpoint** for binary content.
+
+**Request:**
+
+```http
+POST /v1/artifacts
+Content-Type: multipart/form-data
+```
+
+| Part | Type | Required | Description |
+|------|------|----------|-------------|
+| `file` | binary | REQUIRED | The file content. Any MIME type. |
+| `name` | string | OPTIONAL | Human-readable name. Defaults to the uploaded filename. |
+| `description` | string | OPTIONAL | Description of the artifact. |
+| `task_id` | string | OPTIONAL | Associate this artifact with an existing task. |
+| `metadata` | string (JSON) | OPTIONAL | JSON-encoded metadata object. |
+
+**Response (201 Created):**
+
+```json
+{
+  "artifact_id": "art-a1b2c3",
+  "name": "orders-api.yaml",
+  "mime_type": "application/yaml",
+  "uri": "https://agent.example.com/v1/artifacts/art-a1b2c3",
+  "size_bytes": 4096,
+  "created_at": "2026-03-12T10:30:00Z"
+}
+```
+
+**Server requirements:**
+
+- Servers SHOULD support uploads of at least **100 MB** per artifact.
+- Servers MUST return `413 Content Too Large` if the upload exceeds the server's size limit.
+- Servers MUST return `415 Unsupported Media Type` if the Content-Type is not `multipart/form-data`.
+- The server MUST assign a unique `artifact_id` and return a `uri` that can be used to fetch or reference the artifact.
+- If `task_id` is provided, the artifact MUST be appended to the task's `artifacts` array.
+
+**Fetch (`GET /v1/artifacts/{artifact_id}`):**
+
+- Servers MUST return the raw file content with the original `Content-Type` header (e.g., `Content-Type: image/png`).
+- Servers SHOULD include `Content-Disposition: attachment; filename="<name>"`.
+- Servers MUST return `404 Not Found` if the artifact does not exist.
+
+**Referencing uploaded artifacts in messages:**
+
+After uploading, the returned `uri` can be used in any `Artifact` reference within messages, task results, or SSE `artifact` events. This decouples file transfer from the JSON messaging channel.
+
+### 6.7 AIPAck with Task ID
 
 When a task is created, the `AIPAck` MUST include the `task_id`:
 
@@ -1069,6 +1188,19 @@ GET https://agent-backend.example.com/v1/status
 {
   "agent_id": "agent-backend",
   "role": "backend_engineer",
+  "namespace": "acme-corp",
+  "presentation": {
+    "display_name": "Backend Engineer",
+    "tagline": "Designs and reviews REST APIs with OpenAPI output",
+    "icon_url": "https://cdn.example.com/agents/backend-eng.png",
+    "color": "#4A90D9",
+    "locale": "en",
+    "categories": ["engineering", "backend"],
+    "provider": {
+      "name": "Acme Corp",
+      "url": "https://acme.example.com"
+    }
+  },
   "superior": "coordinator",
   "authority_weight": 78,
   "lifecycle": "running",

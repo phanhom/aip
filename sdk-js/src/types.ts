@@ -153,6 +153,29 @@ export interface Skill {
   examples?: Record<string, unknown>[];
 }
 
+/** Organization or individual that operates an agent. */
+export interface Provider {
+  name: string;
+  url?: string | null;
+}
+
+/** Human-facing display metadata for dashboards, agent cards, and marketplace UIs. */
+export interface Presentation {
+  display_name: string;
+  tagline?: string | null;
+  description?: string | null;
+  icon_url?: string | null;
+  /** Hex color, e.g. "#4A90D9". */
+  color?: string | null;
+  /** BCP 47 language tag, e.g. "en", "zh-CN". */
+  locale?: string;
+  categories?: string[];
+  homepage_url?: string | null;
+  privacy_policy_url?: string | null;
+  tos_url?: string | null;
+  provider?: Provider | null;
+}
+
 /** OAuth2 configuration for agent authentication. */
 export interface OAuth2Config {
   token_url: string;
@@ -186,6 +209,8 @@ export interface WorkSnapshot {
 export interface AgentStatus {
   agent_id: string;
   role: string;
+  namespace?: string | null;
+  presentation?: Presentation | null;
   superior?: string | null;
   authority_weight?: number | null;
   lifecycle?: "idle" | "starting" | "running" | "blocked" | "degraded" | "failed" | null;

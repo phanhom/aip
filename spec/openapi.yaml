@@ -142,6 +142,17 @@ paths:
                   value:
                     agent_id: "agent-backend"
                     role: "backend_engineer"
+                    namespace: "acme-corp"
+                    presentation:
+                      display_name: "Backend Engineer"
+                      tagline: "Designs and reviews REST APIs with OpenAPI output"
+                      icon_url: "https://cdn.example.com/agents/backend-eng.png"
+                      color: "#4A90D9"
+                      locale: "en"
+                      categories: ["engineering", "backend"]
+                      provider:
+                        name: "Acme Corp"
+                        url: "https://acme.example.com"
                     superior: "coordinator"
                     lifecycle: "running"
                     ok: true
@@ -238,6 +249,71 @@ paths:
                 $ref: "#/components/schemas/AIPAck"
         "404":
           description: Task not found
+
+  /v1/artifacts:
+    post:
+      operationId: uploadArtifact
+      summary: Upload an artifact (file)
+      description: |
+        Upload a file via multipart/form-data. Returns an Artifact with a server-assigned URI.
+        Any MIME type is accepted. Servers SHOULD support uploads of at least 100 MB.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The file to upload.
+                name:
+                  type: string
+                  description: Human-readable name. Defaults to the uploaded filename.
+                description:
+                  type: string
+                  description: Description of the artifact.
+                task_id:
+                  type: string
+                  description: Associate this artifact with an existing task.
+                metadata:
+                  type: string
+                  description: JSON-encoded metadata object.
+      responses:
+        "201":
+          description: Artifact uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactUploadResponse"
+        "413":
+          description: File too large
+        "415":
+          description: Unsupported media type (must be multipart/form-data)
+
+  /v1/artifacts/{artifact_id}:
+    get:
+      operationId: getArtifact
+      summary: Fetch artifact content
+      description: Download raw artifact content with the original Content-Type.
+      parameters:
+        - name: artifact_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Artifact content
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Artifact not found
 
 components:
   schemas:
@@ -430,6 +506,87 @@ components:
           type: ["object", "null"]
           additionalProperties: true
 
+    ArtifactUploadResponse:
+      type: object
+      required: [artifact_id, name, mime_type, uri, created_at]
+      description: Response returned after a successful artifact upload via POST /v1/artifacts.
+      properties:
+        artifact_id:
+          type: string
+        name:
+          type: string
+        mime_type:
+          type: string
+        uri:
+          type: string
+          format: uri
+          description: Permanent URL to fetch this artifact.
+        size_bytes:
+          type: integer
+          minimum: 0
+          description: Size of the uploaded file in bytes.
+        created_at:
+          type: string
+          format: date-time
+
+    Presentation:
+      type: object
+      required: [display_name]
+      description: Human-facing display metadata for dashboards, agent cards, and marketplace UIs.
+      properties:
+        display_name:
+          type: string
+          description: Short human-readable name for UI display.
+        tagline:
+          type: ["string", "null"]
+          maxLength: 140
+          description: One-line summary suitable for subtitle or tooltip.
+        description:
+          type: ["string", "null"]
+          description: Longer human-readable description. Markdown MAY be used.
+        icon_url:
+          type: ["string", "null"]
+          format: uri
+          description: URL to an avatar or icon image (SHOULD be square, RECOMMENDED 256x256 min).
+        color:
+          type: ["string", "null"]
+          pattern: "^#[0-9a-fA-F]{6}$"
+          description: Brand / accent color as hex (e.g., "#4A90D9").
+        locale:
+          type: string
+          pattern: "^[a-z]{2}(-[A-Z]{2})?$"
+          description: BCP 47 language tag for all human-readable text in this response.
+          default: en
+        categories:
+          type: array
+          items:
+            type: string
+          description: UI categorization labels for marketplace-style discovery.
+          default: []
+        homepage_url:
+          type: ["string", "null"]
+          format: uri
+          description: URL to the agent's documentation or homepage.
+        privacy_policy_url:
+          type: ["string", "null"]
+          format: uri
+          description: URL to the agent provider's privacy policy.
+        tos_url:
+          type: ["string", "null"]
+          format: uri
+          description: URL to the agent provider's terms of service.
+        provider:
+          type: ["object", "null"]
+          description: Organization or individual that operates this agent.
+          required: [name]
+          properties:
+            name:
+              type: string
+              description: Provider / organization name.
+            url:
+              type: ["string", "null"]
+              format: uri
+
     Skill:
       type: object
       required: [id, name, description]
@@ -560,8 +717,18 @@ components:
       properties:
         agent_id:
           type: string
+          description: Unique machine identifier for this agent.
         role:
           type: string
+          description: Agent's role in the group.
+        namespace:
+          type: ["string", "null"]
+          description: Logical namespace for multi-tenant isolation (e.g., "acme-corp", "team-infra").
+        presentation:
+          oneOf:
+            - $ref: "#/components/schemas/Presentation"
+            - type: "null"
+          description: Human-facing display metadata for dashboards, agent cards, and marketplace UIs.
         superior:
           type: ["string", "null"]
         authority_weight:
@@ -651,6 +818,9 @@ components:
         service:
           type: string
           default: aip
+        namespace:
+          type: ["string", "null"]
+          description: Namespace of this agent group.
         root_agent_id:
           type: string
         timestamp:
