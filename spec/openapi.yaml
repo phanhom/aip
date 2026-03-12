@@ -1,0 +1,406 @@
+openapi: "3.1.0"
+
+info:
+  title: Agent Interaction Protocol (AIP)
+  version: "1.0.0"
+  description: |
+    Open protocol for structured agent-to-agent and human-to-agent communication.
+    
+    AIP defines two endpoints:
+    - `POST /aip` — Send a structured message to an agent.
+    - `GET /status` — Discover an agent's identity, health, capabilities, and subordinates.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: AIP Protocol
+    url: https://github.com/aip-protocol
+
+servers:
+  - url: https://agent.example.com
+    description: Example AIP-compliant agent
+
+paths:
+  /aip:
+    post:
+      operationId: sendMessage
+      summary: Send an AIP message
+      description: |
+        Send a structured message to an agent. The agent processes the message
+        and returns an acknowledgment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIPMessage"
+            examples:
+              assign_task:
+                summary: Assign a task to a worker agent
+                value:
+                  version: "1.0"
+                  message_id: "msg-001"
+                  from: "coordinator"
+                  to: "agent-backend"
+                  from_role: "coordinator"
+                  to_role: "backend_engineer"
+                  action: "assign_task"
+                  intent: "Design the order service REST API"
+                  payload:
+                    instruction: "Define REST endpoints, error codes, and schemas"
+                    deliverables: ["openapi", "risk_report"]
+                  priority: "high"
+              submit_report:
+                summary: Worker submits a report
+                value:
+                  version: "1.0"
+                  message_id: "msg-002"
+                  correlation_id: "corr-001"
+                  from: "agent-backend"
+                  to: "coordinator"
+                  action: "submit_report"
+                  intent: "Order service API draft completed"
+                  payload:
+                    summary: "API draft complete"
+                    artifacts: ["openapi/orders.yaml"]
+                  status: "Completed"
+      responses:
+        "200":
+          description: Message accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPAck"
+              example:
+                ok: true
+                message_id: "msg-001"
+                to: "agent-backend"
+                status: "received"
+        "400":
+          description: Routing error (e.g., `to` does not match receiving agent)
+        "401":
+          description: Authentication required
+        "403":
+          description: Forbidden
+        "422":
+          description: Message validation failed
+        "429":
+          description: Rate limited
+        "503":
+          description: Upstream or forwarding target unavailable
+
+  /status:
+    get:
+      operationId: getStatus
+      summary: Get agent status
+      description: |
+        Returns the agent's identity, health, capabilities, and optionally
+        its subordinates. Use the `scope` parameter to control depth.
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [self, subtree, group]
+            default: self
+          description: |
+            - `self`: Current agent only (default for workers)
+            - `subtree`: Agent and all subordinates as a recursive tree
+            - `group`: Flat aggregate of the entire group (coordinators only)
+        - name: root
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            For `scope=subtree`, specifies the root agent ID. 
+            Only applicable for coordinators.
+      responses:
+        "200":
+          description: Agent status
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AgentStatus"
+                  - $ref: "#/components/schemas/RecursiveStatusNode"
+                  - $ref: "#/components/schemas/GroupStatus"
+              examples:
+                self:
+                  summary: Single agent status (scope=self)
+                  value:
+                    agent_id: "agent-backend"
+                    role: "backend_engineer"
+                    superior: "coordinator"
+                    lifecycle: "running"
+                    ok: true
+                    base_url: "https://agent-backend.example.com"
+                    endpoints:
+                      aip: "https://agent-backend.example.com/aip"
+                      status: "https://agent-backend.example.com/status"
+                    capabilities: ["assign_task", "submit_report"]
+                    supported_versions: ["1.0"]
+                    pending_tasks: 2
+                group:
+                  summary: Group status (scope=group)
+                  value:
+                    ok: true
+                    service: "my-agents"
+                    root_agent_id: "coordinator"
+                    timestamp: "2026-03-12T10:00:00Z"
+                    topology:
+                      coordinator: ["agent-backend", "agent-frontend"]
+                    agents:
+                      - agent_id: "coordinator"
+                        role: "coordinator"
+                        lifecycle: "running"
+                        ok: true
+                      - agent_id: "agent-backend"
+                        role: "backend_engineer"
+                        lifecycle: "running"
+                        ok: true
+
+components:
+  schemas:
+    AIPMessage:
+      type: object
+      required: [version, message_id, from, to, action, intent]
+      description: AIP message envelope.
+      properties:
+        version:
+          type: string
+          default: "1.0"
+        message_id:
+          type: string
+        correlation_id:
+          type: ["string", "null"]
+        trace_id:
+          type: ["string", "null"]
+        parent_task_id:
+          type: ["string", "null"]
+        from:
+          type: string
+        to:
+          type: string
+        from_role:
+          type: ["string", "null"]
+        to_role:
+          type: ["string", "null"]
+        to_host:
+          type: ["string", "null"]
+        to_base_url:
+          type: ["string", "null"]
+          format: uri
+        route_scope:
+          type: string
+          enum: [local, remote]
+          default: local
+        action:
+          type: string
+        intent:
+          type: string
+        payload:
+          type: object
+          default: {}
+          additionalProperties: true
+        expected_output:
+          type: ["string", "null"]
+        constraints:
+          type: array
+          items:
+            type: string
+          default: []
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+          default: normal
+        status:
+          type: string
+          enum: [Pending, InProgress, Completed, Failed]
+          default: Pending
+        authority_weight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          default: 50
+        requires_approval:
+          type: boolean
+          default: false
+        approval_state:
+          type: string
+          enum: [not_required, waiting_human, approved, rejected]
+          default: not_required
+        retries:
+          type: integer
+          minimum: 0
+          default: 0
+        latency_ms:
+          type: ["integer", "null"]
+        error_code:
+          type: ["string", "null"]
+        error_message:
+          type: ["string", "null"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AIPAck:
+      type: object
+      required: [ok, message_id, to, status]
+      description: Standard acknowledgment for POST /aip.
+      properties:
+        ok:
+          type: boolean
+        message_id:
+          type: string
+        to:
+          type: string
+        status:
+          type: string
+          enum: [received, queued, rejected]
+        correlation_id:
+          type: ["string", "null"]
+
+    StatusEndpoints:
+      type: object
+      properties:
+        aip:
+          type: ["string", "null"]
+          format: uri
+        status:
+          type: ["string", "null"]
+          format: uri
+
+    WorkSnapshot:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            type: object
+          default: []
+        reports:
+          type: array
+          items:
+            type: object
+          default: []
+        recent_messages:
+          type: array
+          items:
+            type: object
+          default: []
+        last_seen:
+          type: ["string", "null"]
+          format: date-time
+        pending_tasks:
+          type: integer
+          minimum: 0
+          default: 0
+
+    AgentStatus:
+      type: object
+      required: [agent_id, role]
+      description: Status document for a single agent.
+      properties:
+        agent_id:
+          type: string
+        role:
+          type: string
+        superior:
+          type: ["string", "null"]
+        authority_weight:
+          type: ["integer", "null"]
+        lifecycle:
+          type: ["string", "null"]
+          enum: [idle, starting, running, blocked, degraded, failed, null]
+        port:
+          type: ["integer", "null"]
+        ok:
+          type: boolean
+          default: true
+        base_url:
+          type: ["string", "null"]
+          format: uri
+        endpoints:
+          oneOf:
+            - $ref: "#/components/schemas/StatusEndpoints"
+            - type: "null"
+        capabilities:
+          type: array
+          items:
+            type: string
+          default: []
+        supported_versions:
+          type: array
+          items:
+            type: string
+          default: ["1.0"]
+        pending_tasks:
+          type: integer
+          default: 0
+        recent_errors:
+          type: integer
+          default: 0
+        waiting_for_approval:
+          type: boolean
+          default: false
+        last_message_at:
+          type: ["string", "null"]
+          format: date-time
+        last_seen_at:
+          type: ["string", "null"]
+          format: date-time
+        metadata:
+          type: ["object", "null"]
+          additionalProperties: true
+        work:
+          oneOf:
+            - $ref: "#/components/schemas/WorkSnapshot"
+            - type: "null"
+
+    RecursiveStatusNode:
+      type: object
+      required: [self]
+      description: Recursive status tree.
+      properties:
+        self:
+          $ref: "#/components/schemas/AgentStatus"
+        subordinates:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecursiveStatusNode"
+          default: []
+
+    GroupStatus:
+      type: object
+      required: [ok, root_agent_id, agents]
+      description: Flat group-wide status document.
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+          default: aip
+        root_agent_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        topology:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          default: {}
+        waiting_for_approval:
+          type: boolean
+          default: false
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentStatus"

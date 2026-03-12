@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aip-protocol.dev/schemas/status.schema.json",
+  "title": "AIP Status Protocol Schemas",
+  "description": "Schemas for the AIP status protocol: AgentStatus, RecursiveStatusNode, GroupStatus.",
+
+  "$defs": {
+    "StatusEndpoints": {
+      "type": "object",
+      "description": "Discoverable endpoints for an agent.",
+      "properties": {
+        "aip": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "Full URL of the messaging endpoint."
+        },
+        "status": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "Full URL of the status endpoint."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "WorkSnapshot": {
+      "type": "object",
+      "description": "Work-in-progress snapshot for operational visibility.",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Recent task items.",
+          "default": []
+        },
+        "reports": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Recent reports.",
+          "default": []
+        },
+        "recent_messages": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Recent AIP messages.",
+          "default": []
+        },
+        "last_seen": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Last activity timestamp."
+        },
+        "pending_tasks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of incomplete tasks.",
+          "default": 0
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "AgentStatus": {
+      "type": "object",
+      "description": "Status document for a single agent.",
+      "required": ["agent_id", "role"],
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "Unique identifier for this agent."
+        },
+        "role": {
+          "type": "string",
+          "description": "Agent's role in the group."
+        },
+        "superior": {
+          "type": ["string", "null"],
+          "description": "Agent ID of the direct superior.",
+          "default": null
+        },
+        "authority_weight": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Agent's authority weight (0-100).",
+          "default": null
+        },
+        "lifecycle": {
+          "type": ["string", "null"],
+          "enum": ["idle", "starting", "running", "blocked", "degraded", "failed", null],
+          "description": "Agent lifecycle state.",
+          "default": null
+        },
+        "port": {
+          "type": ["integer", "null"],
+          "description": "Service port.",
+          "default": null
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "Whether the agent is healthy.",
+          "default": true
+        },
+        "base_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "Agent's base URL for discovery.",
+          "default": null
+        },
+        "endpoints": {
+          "oneOf": [
+            { "$ref": "#/$defs/StatusEndpoints" },
+            { "type": "null" }
+          ],
+          "description": "Discoverable endpoints.",
+          "default": null
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of supported actions or skills.",
+          "default": []
+        },
+        "supported_versions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Protocol versions this agent supports.",
+          "default": ["1.0"]
+        },
+        "pending_tasks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of pending tasks.",
+          "default": 0
+        },
+        "recent_errors": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of recent errors.",
+          "default": 0
+        },
+        "waiting_for_approval": {
+          "type": "boolean",
+          "description": "Whether the agent is blocked on approval.",
+          "default": false
+        },
+        "last_message_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of last AIP message.",
+          "default": null
+        },
+        "last_seen_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of last activity.",
+          "default": null
+        },
+        "metadata": {
+          "type": ["object", "null"],
+          "description": "Implementation-specific metadata.",
+          "additionalProperties": true,
+          "default": null
+        },
+        "work": {
+          "oneOf": [
+            { "$ref": "#/$defs/WorkSnapshot" },
+            { "type": "null" }
+          ],
+          "description": "Work-in-progress snapshot.",
+          "default": null
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "RecursiveStatusNode": {
+      "type": "object",
+      "description": "Recursive status tree: agent plus all subordinates.",
+      "required": ["self"],
+      "properties": {
+        "self": {
+          "$ref": "#/$defs/AgentStatus"
+        },
+        "subordinates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RecursiveStatusNode" },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "GroupStatus": {
+      "type": "object",
+      "description": "Flat group-wide status document for dashboards and monitoring.",
+      "required": ["ok", "root_agent_id", "agents"],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "description": "Overall group health."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service identifier.",
+          "default": "aip"
+        },
+        "root_agent_id": {
+          "type": "string",
+          "description": "Root coordinator agent ID."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 generation timestamp."
+        },
+        "topology": {
+          "type": "object",
+          "description": "Map of agent_id to list of direct subordinate IDs.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "default": {}
+        },
+        "waiting_for_approval": {
+          "type": "boolean",
+          "description": "Whether any agent is blocked on approval.",
+          "default": false
+        },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AgentStatus" },
+          "description": "Flat list of all agent statuses."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+
+  "oneOf": [
+    { "$ref": "#/$defs/AgentStatus" },
+    { "$ref": "#/$defs/RecursiveStatusNode" },
+    { "$ref": "#/$defs/GroupStatus" }
+  ]
+}

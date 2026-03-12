@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aip-protocol.dev/schemas/message.schema.json",
+  "title": "AIPMessage",
+  "description": "Agent Interaction Protocol message envelope. The standard wire format for agent-to-agent and human-to-agent communication.",
+  "type": "object",
+  "required": ["version", "message_id", "from", "to", "action", "intent"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Protocol version.",
+      "default": "1.0",
+      "examples": ["1.0"]
+    },
+    "message_id": {
+      "type": "string",
+      "description": "Globally unique message identifier (UUID recommended).",
+      "examples": ["8e9930a2-8b58-44ad-a642-4cc1f136cc5d"]
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "description": "Links request-response pairs across messages.",
+      "default": null
+    },
+    "trace_id": {
+      "type": ["string", "null"],
+      "description": "End-to-end distributed trace identifier.",
+      "default": null
+    },
+    "parent_task_id": {
+      "type": ["string", "null"],
+      "description": "Identifier of the parent task that spawned this message.",
+      "default": null
+    },
+    "from": {
+      "type": "string",
+      "description": "Sender identifier. Agent ID or \"user\".",
+      "examples": ["coordinator", "agent-backend", "user"]
+    },
+    "to": {
+      "type": "string",
+      "description": "Receiver agent ID. Use \"*\" for broadcast.",
+      "examples": ["agent-backend", "*"]
+    },
+    "from_role": {
+      "type": ["string", "null"],
+      "description": "Sender's role.",
+      "examples": ["coordinator", "backend_engineer", "user"],
+      "default": null
+    },
+    "to_role": {
+      "type": ["string", "null"],
+      "description": "Expected role of the receiver.",
+      "default": null
+    },
+    "to_host": {
+      "type": ["string", "null"],
+      "description": "Target host hint for routing.",
+      "default": null
+    },
+    "to_base_url": {
+      "type": ["string", "null"],
+      "description": "Full base URL for cross-host routing.",
+      "format": "uri",
+      "examples": ["https://agent-backend.us-east.example.com"],
+      "default": null
+    },
+    "route_scope": {
+      "type": "string",
+      "enum": ["local", "remote"],
+      "description": "Routing intent: local (same host/network) or remote (cross-host).",
+      "default": "local"
+    },
+    "action": {
+      "type": "string",
+      "description": "The action to perform. Standard actions defined by the protocol; custom actions use x-<org>/<name> prefix.",
+      "examples": [
+        "assign_task",
+        "submit_report",
+        "request_context",
+        "request_artifact_review",
+        "request_approval",
+        "publish_status",
+        "handoff",
+        "escalate",
+        "tool_result",
+        "sync_skill_registry",
+        "user_instruction"
+      ]
+    },
+    "intent": {
+      "type": "string",
+      "description": "Human-readable description of the sender's intention.",
+      "examples": ["Design the order service REST API"]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Structured data for the action. Schema is action-dependent.",
+      "default": {},
+      "additionalProperties": true
+    },
+    "expected_output": {
+      "type": ["string", "null"],
+      "description": "Description of the expected result or deliverable.",
+      "default": null
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Policy, deadline, or context constraints.",
+      "default": []
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["low", "normal", "high", "urgent"],
+      "description": "Message priority level.",
+      "default": "normal"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["Pending", "InProgress", "Completed", "Failed"],
+      "description": "Message lifecycle status.",
+      "default": "Pending"
+    },
+    "authority_weight": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Sender's authority level (0-100).",
+      "default": 50
+    },
+    "requires_approval": {
+      "type": "boolean",
+      "description": "Whether this action requires human approval before execution.",
+      "default": false
+    },
+    "approval_state": {
+      "type": "string",
+      "enum": ["not_required", "waiting_human", "approved", "rejected"],
+      "description": "Current approval workflow state.",
+      "default": "not_required"
+    },
+    "retries": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of delivery retries attempted.",
+      "default": 0
+    },
+    "latency_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Processing latency in milliseconds.",
+      "default": null
+    },
+    "error_code": {
+      "type": ["string", "null"],
+      "description": "Machine-readable error code.",
+      "default": null
+    },
+    "error_message": {
+      "type": ["string", "null"],
+      "description": "Human-readable error description.",
+      "default": null
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of message creation."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of last update."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aip-protocol.dev/schemas/ack.schema.json",
+  "title": "AIPAck",
+  "description": "Standard acknowledgment returned by POST /aip handlers.",
+  "type": "object",
+  "required": ["ok", "message_id", "to", "status"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "description": "true if the message was accepted."
+    },
+    "message_id": {
+      "type": "string",
+      "description": "Echoed message_id from the request."
+    },
+    "to": {
+      "type": "string",
+      "description": "The agent that received the message."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["received", "queued", "rejected"],
+      "description": "Acceptance status."
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "description": "Echoed correlation_id from the request, if present.",
+      "default": null
+    }
+  },
+  "additionalProperties": false
+}
