@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aip-protocol"
-version = "1.0.0"
+version = "1.1.0"
 description = "Agent Interaction Protocol — open standard for agent-to-agent communication."
 readme = "README.md"
 license = "Apache-2.0"
@@ -28,7 +28,20 @@ dependencies = [
     "httpx>=0.25",
 ]
 
+[project.scripts]
+aip = "aip.cli:main"
+
 [project.optional-dependencies]
+bridge = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+ws = [
+    "websockets>=12.0",
+]
+all = [
+    "aip-protocol[bridge,ws]",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",

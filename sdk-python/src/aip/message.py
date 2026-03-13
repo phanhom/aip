@@ -208,6 +208,9 @@ class AIPTask(BaseModel):
 
     task_id: str = Field(default_factory=lambda: str(uuid4()))
     message_id: str
+    trace_id: str | None = None
+    correlation_id: str | None = None
+    parent_task_id: str | None = None
     state: TaskState = TaskState.submitted
     from_agent: str = Field(..., alias="from")
     to: str

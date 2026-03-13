@@ -2,7 +2,7 @@ openapi: "3.1.0"
 
 info:
   title: Agent Interaction Protocol (AIP)
-  version: "1.0.0"
+  version: "1.1.0"
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     
@@ -315,8 +315,398 @@ paths:
         "404":
           description: Artifact not found
 
+  /v1/traces:
+    post:
+      operationId: emitTraces
+      summary: Emit trace events
+      description: |
+        Submit one or more trace events for observability.
+        Events are stored and queryable via GET /v1/traces.
+      tags: [observability]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TraceBatch"
+      responses:
+        "200":
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: integer
+    get:
+      operationId: queryTraces
+      summary: Query trace events
+      description: |
+        Retrieve trace events with filtering, pagination, and ordering.
+      tags: [observability]
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: trace_id
+          in: query
+          schema:
+            type: string
+        - name: trace_type
+          in: query
+          schema:
+            type: string
+        - name: task_id
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [TRACE, DEBUG, INFO, WARN, ERROR, FATAL]
+        - name: namespace
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Paginated trace events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TraceQueryResult"
+
+  /v1/traces/{event_id}:
+    get:
+      operationId: getTraceEvent
+      summary: Get a single trace event
+      tags: [observability]
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trace event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TraceEvent"
+        "404":
+          description: Event not found
+
+  /v1/usage:
+    get:
+      operationId: getUsageSummary
+      summary: Aggregated LLM usage and cost summary
+      tags: [observability]
+      parameters:
+        - name: namespace
+          in: query
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: model
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [model, agent, hour, day]
+            default: model
+      responses:
+        "200":
+          description: Usage summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageSummary"
+
+  /v1/registry/agents:
+    post:
+      operationId: registerAgent
+      summary: Register an external agent with the platform
+      description: |
+        An agent announces itself to the platform by providing its base_url.
+        The platform probes GET {base_url}/v1/status to validate and enrich the registration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRegistration"
+      responses:
+        "201":
+          description: Agent registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRegistrationResponse"
+        "409":
+          description: Agent already registered in this namespace
+        "422":
+          description: Platform could not reach the agent's status endpoint
+    get:
+      operationId: listAgents
+      summary: List registered agents
+      description: List all registered agents with optional filtering.
+      parameters:
+        - name: namespace
+          in: query
+          schema:
+            type: string
+        - name: role
+          in: query
+          schema:
+            type: string
+        - name: lifecycle
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: ok
+          in: query
+          schema:
+            type: boolean
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Free-text search across display_name, tagline, skills.
+      responses:
+        "200":
+          description: List of registered agents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRegistryList"
+
+  /v1/registry/agents/{agent_id}:
+    get:
+      operationId: getRegisteredAgent
+      summary: Get a registered agent
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent registration record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRegistrationRecord"
+        "404":
+          description: Agent not found
+    delete:
+      operationId: deregisterAgent
+      summary: Deregister an agent
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Agent deregistered
+        "404":
+          description: Agent not found
+
+  /v1/registry/agents/{agent_id}/heartbeat:
+    post:
+      operationId: agentHeartbeat
+      summary: Agent heartbeat
+      description: Registered agents send periodic heartbeats to signal liveness.
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Heartbeat"
+      responses:
+        "200":
+          description: Heartbeat acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartbeatAck"
+        "404":
+          description: Agent not registered
+
 components:
   schemas:
+    AgentRegistration:
+      type: object
+      required: [base_url]
+      description: Request to register an external agent with the platform.
+      properties:
+        base_url:
+          type: string
+          format: uri
+          description: The agent's root URL. Platform will probe {base_url}/v1/status.
+        namespace:
+          type: ["string", "null"]
+          description: Requested namespace.
+        api_key:
+          type: ["string", "null"]
+          description: API key for the platform to authenticate when calling the agent.
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+
+    AgentRegistrationResponse:
+      type: object
+      required: [agent_id, base_url, registered_at, status, heartbeat_interval_seconds, heartbeat_url]
+      description: Successful registration response.
+      properties:
+        agent_id:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        namespace:
+          type: ["string", "null"]
+        registered_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, degraded, failed]
+        heartbeat_interval_seconds:
+          type: integer
+          minimum: 10
+        heartbeat_url:
+          type: string
+          format: uri
+
+    AgentRegistrationRecord:
+      type: object
+      required: [agent_id, base_url, status, registered_at]
+      description: A single agent registration record.
+      properties:
+        agent_id:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        namespace:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [active, degraded, failed]
+        registered_at:
+          type: string
+          format: date-time
+        last_heartbeat_at:
+          type: ["string", "null"]
+          format: date-time
+        cached_status:
+          oneOf:
+            - $ref: "#/components/schemas/AgentStatus"
+            - type: "null"
+
+    AgentRegistryList:
+      type: object
+      required: [agents, total]
+      description: Paginated list of registered agents.
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentRegistrationRecord"
+        total:
+          type: integer
+          minimum: 0
+
+    Heartbeat:
+      type: object
+      description: Lightweight liveness signal from a registered agent.
+      properties:
+        ok:
+          type: boolean
+          default: true
+        lifecycle:
+          type: ["string", "null"]
+          enum: [idle, starting, running, blocked, degraded, failed, null]
+        pending_tasks:
+          type: integer
+          minimum: 0
+          default: 0
+        timestamp:
+          type: string
+          format: date-time
+
+    HeartbeatAck:
+      type: object
+      required: [ack]
+      properties:
+        ack:
+          type: boolean
+        next_heartbeat_at:
+          type: string
+          format: date-time
+
     AIPMessage:
       type: object
       required: [version, message_id, from, to, action, intent]
@@ -444,6 +834,15 @@ components:
           type: string
         message_id:
           type: string
+        trace_id:
+          type: ["string", "null"]
+          description: End-to-end trace identifier (propagated from originating message).
+        correlation_id:
+          type: ["string", "null"]
+          description: Request-response correlation identifier.
+        parent_task_id:
+          type: ["string", "null"]
+          description: Parent task ID for sub-task decomposition.
         state:
           type: string
           enum: [submitted, working, input-required, completed, failed, canceled]
@@ -840,3 +1239,207 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AgentStatus"
+
+    # ── Observability schemas ───────────────────────────────────────
+
+    TraceEvent:
+      type: object
+      required: [event_id, trace_id, agent_id, trace_type, timestamp]
+      description: A single observable event in an agent system.
+      properties:
+        event_id:
+          type: string
+        trace_id:
+          type: string
+        agent_id:
+          type: string
+        trace_type:
+          type: string
+          description: "Standard types: aip.message.sent, aip.message.received, task.created, task.working, task.completed, task.failed, task.canceled, task.input_required, llm.request, llm.response, llm.usage, tool.call, tool.result, report, conversation, approval, error, log"
+        severity:
+          type: string
+          enum: [TRACE, DEBUG, INFO, WARN, ERROR, FATAL]
+          default: INFO
+        timestamp:
+          type: string
+          format: date-time
+        correlation_id:
+          type: ["string", "null"]
+        parent_event_id:
+          type: ["string", "null"]
+        span_id:
+          type: ["string", "null"]
+        parent_span_id:
+          type: ["string", "null"]
+        task_id:
+          type: ["string", "null"]
+        message_id:
+          type: ["string", "null"]
+        summary:
+          type: ["string", "null"]
+        payload:
+          type: object
+          default: {}
+        metadata:
+          type: ["object", "null"]
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        duration_ms:
+          type: ["integer", "null"]
+        namespace:
+          type: ["string", "null"]
+
+    TraceBatch:
+      type: object
+      required: [events]
+      description: Batch of trace events for bulk emission.
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceEvent"
+
+    TraceQueryResult:
+      type: object
+      required: [events, total, limit, offset, has_more]
+      description: Paginated trace query result.
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceEvent"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+
+    LLMUsage:
+      type: object
+      required: [model, prompt_tokens, completion_tokens, total_tokens]
+      description: Token and cost data for a single LLM invocation.
+      properties:
+        model:
+          type: string
+        provider:
+          type: ["string", "null"]
+        prompt_tokens:
+          type: integer
+          default: 0
+        completion_tokens:
+          type: integer
+          default: 0
+        total_tokens:
+          type: integer
+          default: 0
+        cached_tokens:
+          type: integer
+          default: 0
+        estimated_cost_usd:
+          type: ["number", "null"]
+        duration_ms:
+          type: ["integer", "null"]
+        request_id:
+          type: ["string", "null"]
+        agent_id:
+          type: ["string", "null"]
+        task_id:
+          type: ["string", "null"]
+        trace_id:
+          type: ["string", "null"]
+
+    ModelUsageBreakdown:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+        provider:
+          type: ["string", "null"]
+        requests:
+          type: integer
+          default: 0
+        prompt_tokens:
+          type: integer
+          default: 0
+        completion_tokens:
+          type: integer
+          default: 0
+        total_tokens:
+          type: integer
+          default: 0
+        cached_tokens:
+          type: integer
+          default: 0
+        estimated_cost_usd:
+          type: number
+          default: 0.0
+
+    AgentUsageBreakdown:
+      type: object
+      required: [agent_id]
+      properties:
+        agent_id:
+          type: string
+        requests:
+          type: integer
+          default: 0
+        total_tokens:
+          type: integer
+          default: 0
+        estimated_cost_usd:
+          type: number
+          default: 0.0
+        by_model:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelUsageBreakdown"
+          default: []
+
+    UsageSummary:
+      type: object
+      required: [period_start, period_end]
+      description: Aggregated LLM usage summary.
+      properties:
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        namespace:
+          type: ["string", "null"]
+        total_requests:
+          type: integer
+          default: 0
+        total_prompt_tokens:
+          type: integer
+          default: 0
+        total_completion_tokens:
+          type: integer
+          default: 0
+        total_tokens:
+          type: integer
+          default: 0
+        total_cached_tokens:
+          type: integer
+          default: 0
+        total_estimated_cost_usd:
+          type: number
+          default: 0.0
+        by_model:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelUsageBreakdown"
+          default: []
+        by_agent:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentUsageBreakdown"
+          default: []

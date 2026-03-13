@@ -38,6 +38,8 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 
 ## Core Endpoints
 
+**Agent-to-Agent** (implemented by each agent):
+
 | Endpoint | Purpose |
 |----------|---------|
 | `POST /v1/aip` | Send a message (SSE streaming by default) |
@@ -47,6 +49,93 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 | `POST /v1/tasks/{id}/send` | Send follow-up input into a task |
 | `POST /v1/artifacts` | Upload a file (multipart/form-data, any type/size) |
 | `GET /v1/artifacts/{id}` | Download artifact content |
+
+**Observability & Cost** (implemented by the platform or agent):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /v1/traces` | Emit trace events (batch) |
+| `GET /v1/traces` | Query trace events (filter by agent, type, time) |
+| `GET /v1/usage` | Aggregated LLM usage and cost summary |
+
+**Platform Registry** (implemented by the management platform):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /v1/registry/agents` | Register an external agent (one API call to join) |
+| `GET /v1/registry/agents` | List/search registered agents |
+| `DELETE /v1/registry/agents/{id}` | Deregister an agent |
+| `POST /v1/registry/agents/{id}/heartbeat` | Agent heartbeat (liveness signal) |
+
+## One-Line Bridge
+
+Connect **any** agent to an AIP platform — one command, any protocol, any network:
+
+```bash
+pip install aip-protocol[bridge] && aip bridge --agent <url> --platform <url> --secret <key>
+```
+
+The bridge auto-detects the protocol from the URL scheme, exposes `GET /v1/status` + `POST /v1/aip`, registers with the platform, and starts heartbeating — all automatically.
+
+| Scenario | Command |
+|----------|---------|
+| **HTTP REST agent** | `aip bridge --agent http://localhost:8080/chat --platform https://hive.example.com --secret sk-xxx` |
+| **WebSocket agent** | `aip bridge --agent ws://localhost:18789 --platform https://hive.example.com --secret sk-xxx` |
+| **Subprocess (stdin/stdout)** | `aip bridge --agent "stdio:python my_agent.py" --platform https://hive.example.com --secret sk-xxx` |
+| **OpenAI-compatible API** | `aip bridge --agent http://localhost:11434/v1/chat/completions --api-format openai --platform https://hive.example.com --secret sk-xxx` |
+| **Remote machine (LAN)** | `aip bridge --agent http://192.168.1.100:5000/api --platform https://hive.example.com --secret sk-xxx --name "GPU Server"` |
+| **Behind NAT / tunnel** | `aip bridge --agent http://localhost:8080 --platform https://hive.example.com --secret sk-xxx --public-url https://my-agent.ngrok.io` |
+| **Full identity** | `aip bridge --agent ws://10.0.0.5:8080 --platform https://hive.example.com --secret sk-xxx --name "CodeBot" --namespace my-team --tags code,review --color "#4A90D9"` |
+| **Standalone (no platform)** | `aip bridge --agent http://localhost:8080/chat --port 9090` |
+
+Or use environment variables — ideal for servers, Docker, and CI:
+
+```bash
+export AIP_BRIDGE_AGENT=ws://localhost:18789
+export AIP_BRIDGE_PLATFORM=https://hive.example.com
+export AIP_BRIDGE_SECRET=sk-xxx
+export AIP_BRIDGE_NAME="My Agent"
+aip bridge
+```
+
+<details>
+<summary>All flags reference</summary>
+
+```
+aip bridge [OPTIONS]
+
+Agent connection:
+  --agent URL             Agent URL (http://, ws://, stdio:cmd)
+  --agent-secret KEY      Auth token for the external agent
+  --protocol http|ws|stdio  Override auto-detection
+  --api-format generic|openai|anthropic|raw  Message format (default: generic)
+  --timeout SEC           Agent call timeout (default: 120)
+
+Platform registration:
+  --platform URL          AIP platform URL (omit for standalone)
+  --secret KEY            Shared secret for platform auth
+  --heartbeat SEC         Heartbeat interval (default: 10)
+
+Agent identity:
+  --name NAME             Display name (default: hostname)
+  --id ID                 Machine identifier (default: bridge-<hostname>-<port>)
+  --namespace NS          Logical namespace (default: default)
+  --role ROLE             Agent role (default: worker)
+  --tags t1,t2            Capability tags
+  --icon URL              Icon URL for dashboards
+  --color HEX             Brand color (#4A90D9)
+
+Network:
+  --port PORT             Local bridge port (default: 9090)
+  --host ADDR             Bind address (default: 0.0.0.0)
+  --public-url URL        Public URL (for NAT/tunnel/reverse proxy)
+```
+
+Every flag has an `AIP_BRIDGE_*` env var equivalent (e.g. `AIP_BRIDGE_AGENT`).
+
+</details>
+
+---
 
 ## Quick Start
 
@@ -222,8 +311,9 @@ aip/
 ├── sdk-java/                      # Java SDK
 ├── sdk-js/                        # JavaScript/TypeScript SDK
 ├── examples/                      # Quick-start examples
-│   ├── minimal-python/
-│   └── minimal-typescript/
+│   ├── minimal-python/            # Simplest AIP agent
+│   ├── minimal-typescript/        # TS wire-format example
+│   └── adapter-python/            # Wrap ANY agent into AIP (copy & edit 3 functions)
 ├── conformance/                   # Conformance test suite
 ├── LICENSE
 ├── CONTRIBUTING.md

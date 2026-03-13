@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aip-protocol.dev/schemas/trace.schema.json",
+  "title": "AIP Trace Event & LLM Usage Schemas",
+  "description": "Standardized observability events and cost tracking for AIP-compliant systems.",
+
+  "$defs": {
+    "TraceSeverity": {
+      "type": "string",
+      "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]
+    },
+
+    "TraceType": {
+      "type": "string",
+      "description": "Standard trace types. Custom types use x-<org>/<name> prefix.",
+      "examples": [
+        "aip.message.sent",
+        "aip.message.received",
+        "task.created",
+        "task.working",
+        "task.completed",
+        "task.failed",
+        "task.canceled",
+        "task.input_required",
+        "llm.request",
+        "llm.response",
+        "llm.usage",
+        "tool.call",
+        "tool.result",
+        "report",
+        "conversation",
+        "approval",
+        "error",
+        "log"
+      ]
+    },
+
+    "TraceEvent": {
+      "type": "object",
+      "required": ["event_id", "trace_id", "agent_id", "trace_type", "timestamp"],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "description": "Unique event identifier."
+        },
+        "trace_id": {
+          "type": "string",
+          "description": "End-to-end trace identifier linking all events in a workflow."
+        },
+        "agent_id": {
+          "type": "string",
+          "description": "Agent that emitted this event."
+        },
+        "trace_type": {
+          "$ref": "#/$defs/TraceType"
+        },
+        "severity": {
+          "$ref": "#/$defs/TraceSeverity",
+          "default": "INFO"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "correlation_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "parent_event_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "span_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "parent_span_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "task_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "message_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "payload": {
+          "type": "object",
+          "default": {},
+          "description": "Type-specific data. For llm.usage, should conform to LLMUsage schema."
+        },
+        "metadata": {
+          "type": ["object", "null"],
+          "default": null
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "duration_ms": {
+          "type": ["integer", "null"],
+          "default": null
+        },
+        "namespace": {
+          "type": ["string", "null"],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TraceBatch": {
+      "type": "object",
+      "required": ["events"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TraceEvent" }
+        }
+      }
+    },
+
+    "TraceQueryResult": {
+      "type": "object",
+      "required": ["events", "total", "limit", "offset", "has_more"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TraceEvent" }
+        },
+        "total": { "type": "integer" },
+        "limit": { "type": "integer" },
+        "offset": { "type": "integer" },
+        "has_more": { "type": "boolean" }
+      }
+    },
+
+    "LLMUsage": {
+      "type": "object",
+      "required": ["model", "prompt_tokens", "completion_tokens", "total_tokens"],
+      "description": "Token and cost data for a single LLM invocation.",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model identifier (e.g., gpt-4o, claude-sonnet-4-20250514)."
+        },
+        "provider": {
+          "type": ["string", "null"],
+          "description": "Provider name (e.g., openai, anthropic)."
+        },
+        "prompt_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "completion_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "cached_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "estimated_cost_usd": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "default": null
+        },
+        "duration_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "default": null
+        },
+        "request_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "agent_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "task_id": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "trace_id": {
+          "type": ["string", "null"],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ModelUsageBreakdown": {
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": { "type": "string" },
+        "provider": { "type": ["string", "null"] },
+        "requests": { "type": "integer", "default": 0 },
+        "prompt_tokens": { "type": "integer", "default": 0 },
+        "completion_tokens": { "type": "integer", "default": 0 },
+        "total_tokens": { "type": "integer", "default": 0 },
+        "cached_tokens": { "type": "integer", "default": 0 },
+        "estimated_cost_usd": { "type": "number", "default": 0.0 }
+      }
+    },
+
+    "AgentUsageBreakdown": {
+      "type": "object",
+      "required": ["agent_id"],
+      "properties": {
+        "agent_id": { "type": "string" },
+        "requests": { "type": "integer", "default": 0 },
+        "total_tokens": { "type": "integer", "default": 0 },
+        "estimated_cost_usd": { "type": "number", "default": 0.0 },
+        "by_model": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ModelUsageBreakdown" },
+          "default": []
+        }
+      }
+    },
+
+    "UsageSummary": {
+      "type": "object",
+      "required": ["period_start", "period_end"],
+      "description": "Aggregated LLM usage summary.",
+      "properties": {
+        "period_start": { "type": "string", "format": "date-time" },
+        "period_end": { "type": "string", "format": "date-time" },
+        "namespace": { "type": ["string", "null"] },
+        "total_requests": { "type": "integer", "default": 0 },
+        "total_prompt_tokens": { "type": "integer", "default": 0 },
+        "total_completion_tokens": { "type": "integer", "default": 0 },
+        "total_tokens": { "type": "integer", "default": 0 },
+        "total_cached_tokens": { "type": "integer", "default": 0 },
+        "total_estimated_cost_usd": { "type": "number", "default": 0.0 },
+        "by_model": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ModelUsageBreakdown" },
+          "default": []
+        },
+        "by_agent": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AgentUsageBreakdown" },
+          "default": []
+        }
+      }
+    }
+  }
+}

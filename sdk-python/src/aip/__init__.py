@@ -15,8 +15,16 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
+from aip.bridge import BridgeConfig
+from aip.jsonrpc_bridge import (
+    aip_ack_to_jsonrpc,
+    aip_to_jsonrpc,
+    is_jsonrpc,
+    jsonrpc_error_to_aip,
+    jsonrpc_to_aip,
+)
 from aip.message import (
     AIPAck,
     AIPAction,
@@ -32,6 +40,19 @@ from aip.message import (
     TaskState,
     build_message,
 )
+from aip.observability import (
+    AgentUsageBreakdown,
+    LLMUsage,
+    ModelUsageBreakdown,
+    TraceBatch,
+    TraceEvent,
+    TraceQuery,
+    TraceQueryResult,
+    TraceSeverity,
+    TraceType,
+    UsageQuery,
+    UsageSummary,
+)
 from aip.send import (
     DEFAULT_API_VERSION,
     SendParams,
@@ -39,13 +60,6 @@ from aip.send import (
     async_send_batch,
     send,
     send_batch,
-)
-from aip.jsonrpc_bridge import (
-    aip_ack_to_jsonrpc,
-    aip_to_jsonrpc,
-    is_jsonrpc,
-    jsonrpc_error_to_aip,
-    jsonrpc_to_aip,
 )
 from aip.status import (
     AgentStatus,
@@ -63,7 +77,7 @@ from aip.status import (
 
 __all__ = [
     "__version__",
-    "DEFAULT_API_VERSION",
+    # Message layer
     "AIPAction",
     "AIPAck",
     "AIPErrorCode",
@@ -77,11 +91,14 @@ __all__ = [
     "Skill",
     "TaskState",
     "build_message",
+    # Transport
+    "DEFAULT_API_VERSION",
     "SendParams",
     "send",
     "send_batch",
     "async_send",
     "async_send_batch",
+    # Status / Discovery
     "StatusScope",
     "StatusEndpoints",
     "SkillDescriptor",
@@ -90,12 +107,27 @@ __all__ = [
     "AuthenticationInfo",
     "RateLimitInfo",
     "WorkSnapshot",
+    "AgentStatus",
+    "RecursiveStatusNode",
+    "GroupStatus",
+    # Observability
+    "TraceType",
+    "TraceSeverity",
+    "TraceEvent",
+    "TraceBatch",
+    "TraceQuery",
+    "TraceQueryResult",
+    "LLMUsage",
+    "ModelUsageBreakdown",
+    "AgentUsageBreakdown",
+    "UsageSummary",
+    "UsageQuery",
+    # JSON-RPC bridge
     "is_jsonrpc",
     "aip_to_jsonrpc",
     "jsonrpc_to_aip",
     "aip_ack_to_jsonrpc",
     "jsonrpc_error_to_aip",
-    "AgentStatus",
-    "RecursiveStatusNode",
-    "GroupStatus",
+    # Bridge
+    "BridgeConfig",
 ]

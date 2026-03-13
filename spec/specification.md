@@ -641,6 +641,9 @@ submitted ──→ working ──→ completed
 |-------|------|----------|-------------|
 | `task_id` | string | REQUIRED | Globally unique task identifier. |
 | `message_id` | string | REQUIRED | The originating message that created this task. |
+| `trace_id` | string \| null | OPTIONAL | End-to-end trace identifier (propagated from the originating message). |
+| `correlation_id` | string \| null | OPTIONAL | Request-response correlation identifier. |
+| `parent_task_id` | string \| null | OPTIONAL | Parent task ID for sub-task decomposition. |
 | `state` | string | REQUIRED | Current task state (see 6.2). |
 | `from` | string | REQUIRED | Agent/user that initiated the task. |
 | `to` | string | REQUIRED | Agent responsible for executing the task. |
@@ -963,20 +966,203 @@ data: {"error_code":"aip/execution/task_failed","error_message":"Compilation fai
 
 ---
 
-## 10. Observability
+## 10. Observability and Cost Tracking
 
-### 10.1 Distributed Tracing
+### 10.1 Overview
 
-AIP messages carry `trace_id` and `correlation_id` fields for end-to-end tracing. Implementations SHOULD propagate these fields through all downstream messages and log entries.
+AIP defines a standard **trace event** format so that any dashboard, monitoring tool, or analytics pipeline can consume observability data from any AIP-compliant agent without proprietary adapters. This section covers:
 
-### 10.2 Logging
+- **Distributed tracing** — linking events across agents and tasks
+- **Trace events** — the standard event schema and type registry
+- **LLM usage** — token and cost tracking
+- **Endpoints** — how to emit and query trace data
+
+### 10.2 Distributed Tracing
+
+AIP messages carry `trace_id` and `correlation_id` for end-to-end tracing:
+
+| Field | Scope | Purpose |
+|-------|-------|---------|
+| `trace_id` | Workflow | Links all messages, tasks, and events in a single user-initiated workflow |
+| `correlation_id` | Request-response | Links a specific request to its response |
+| `parent_task_id` | Task hierarchy | Links a sub-task to its parent |
+| `span_id` | Span | Unique identifier for one unit of work (OpenTelemetry compatible) |
+
+Implementations MUST propagate `trace_id` through all downstream messages, task creations, and trace events. Implementations SHOULD propagate `correlation_id` and generate a new `span_id` per unit of work.
+
+### 10.3 Trace Event Schema
+
+A **TraceEvent** is a single observable event. Every meaningful action — sending a message, calling an LLM, completing a task, logging an error — SHOULD be emitted as a `TraceEvent`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `event_id` | string | Yes | Unique event identifier (UUID recommended) |
+| `trace_id` | string | Yes | End-to-end trace identifier |
+| `agent_id` | string | Yes | Agent that emitted this event |
+| `trace_type` | string | Yes | Event type from the registry (Section 10.4) |
+| `severity` | string | No | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` (default: `INFO`) |
+| `timestamp` | string | Yes | ISO 8601 timestamp |
+| `correlation_id` | string | No | Request-response correlation |
+| `parent_event_id` | string | No | Causal parent event |
+| `span_id` | string | No | OpenTelemetry span ID |
+| `parent_span_id` | string | No | Parent span ID |
+| `task_id` | string | No | Associated task |
+| `message_id` | string | No | Associated message |
+| `summary` | string | No | Human-readable summary |
+| `payload` | object | No | Type-specific data (e.g., `LLMUsage` for `llm.usage`) |
+| `metadata` | object | No | Extension fields |
+| `tags` | array | No | Searchable tags |
+| `duration_ms` | integer | No | Duration of the operation |
+| `namespace` | string | No | Logical namespace |
+
+Example:
+
+```json
+{
+  "event_id": "evt-a1b2c3",
+  "trace_id": "tr-workflow-789",
+  "agent_id": "agent-backend",
+  "trace_type": "llm.usage",
+  "severity": "INFO",
+  "timestamp": "2026-03-12T10:30:00Z",
+  "task_id": "task-456",
+  "summary": "GPT-4o completion for API design",
+  "payload": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "prompt_tokens": 1200,
+    "completion_tokens": 850,
+    "total_tokens": 2050,
+    "estimated_cost_usd": 0.035,
+    "duration_ms": 2300
+  },
+  "duration_ms": 2300,
+  "namespace": "acme-corp"
+}
+```
+
+### 10.4 Trace Type Registry
+
+Standard trace types. Implementations MAY define custom types using the `x-<org>/<name>` prefix.
+
+| Type | When to emit |
+|------|-------------|
+| `aip.message.sent` | Agent sends an AIP message |
+| `aip.message.received` | Agent receives an AIP message |
+| `task.created` | New task is created |
+| `task.working` | Task transitions to working state |
+| `task.completed` | Task completes successfully |
+| `task.failed` | Task fails |
+| `task.canceled` | Task is canceled |
+| `task.input_required` | Task needs user/agent input |
+| `llm.request` | LLM API call initiated |
+| `llm.response` | LLM API call returned |
+| `llm.usage` | LLM token/cost summary (may combine request+response) |
+| `tool.call` | Agent invokes a tool |
+| `tool.result` | Tool returns a result |
+| `report` | Agent submits a work report |
+| `conversation` | Conversation message (human or agent) |
+| `approval` | Approval state change |
+| `error` | Error occurrence |
+| `log` | General log entry |
+
+### 10.5 LLM Usage Schema
+
+The `llm.usage` trace event payload MUST use this structure:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `model` | string | Yes | Model identifier (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
+| `provider` | string | No | Provider name (e.g., `openai`, `anthropic`) |
+| `prompt_tokens` | integer | Yes | Input tokens |
+| `completion_tokens` | integer | Yes | Output tokens |
+| `total_tokens` | integer | Yes | Total tokens (`prompt + completion`) |
+| `cached_tokens` | integer | No | Tokens served from cache (default: 0) |
+| `estimated_cost_usd` | number | No | Estimated cost in USD |
+| `duration_ms` | integer | No | LLM call latency |
+| `request_id` | string | No | Provider's request ID |
+| `agent_id` | string | No | Agent that made the call |
+| `task_id` | string | No | Associated task |
+| `trace_id` | string | No | Associated trace |
+
+### 10.6 Usage Summary
+
+Platforms SHOULD aggregate LLM usage data and expose it via `GET /v1/usage`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `period_start` | string | ISO 8601 start of period |
+| `period_end` | string | ISO 8601 end of period |
+| `namespace` | string | Namespace filter (if applied) |
+| `total_requests` | integer | Total LLM calls |
+| `total_prompt_tokens` | integer | Total input tokens |
+| `total_completion_tokens` | integer | Total output tokens |
+| `total_tokens` | integer | Grand total tokens |
+| `total_cached_tokens` | integer | Total cached tokens |
+| `total_estimated_cost_usd` | number | Total estimated cost |
+| `by_model` | array | Per-model breakdown |
+| `by_agent` | array | Per-agent breakdown |
+
+### 10.7 Trace Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/traces` | Emit one or more trace events (batch) |
+| `GET` | `/v1/traces` | Query trace events |
+| `GET` | `/v1/traces/{event_id}` | Retrieve a single event |
+| `GET` | `/v1/usage` | Aggregated LLM usage summary |
+
+**POST /v1/traces** — Emit events:
+
+```json
+{
+  "events": [
+    { "event_id": "...", "trace_id": "...", "agent_id": "...", "trace_type": "llm.usage", "timestamp": "...", "payload": { ... } }
+  ]
+}
+```
+
+Response: `200 OK` with `{ "accepted": <count> }`.
+
+**GET /v1/traces** — Query events:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | string | Filter by agent |
+| `trace_id` | string | Filter by trace |
+| `trace_type` | string | Filter by type |
+| `task_id` | string | Filter by task |
+| `severity` | string | Minimum severity |
+| `namespace` | string | Filter by namespace |
+| `since` | string | ISO 8601 start time |
+| `until` | string | ISO 8601 end time |
+| `limit` | integer | Max results (default: 100, max: 1000) |
+| `offset` | integer | Pagination offset |
+| `order` | string | `asc` or `desc` (default: `desc`) |
+
+Response: paginated `TraceQueryResult`.
+
+**GET /v1/usage** — Aggregated cost:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `namespace` | string | Filter by namespace |
+| `agent_id` | string | Filter by agent |
+| `model` | string | Filter by model |
+| `since` | string | Period start |
+| `until` | string | Period end |
+| `group_by` | string | `model`, `agent`, `hour`, or `day` |
+
+Response: `UsageSummary` object.
+
+### 10.8 Logging
 
 Implementations SHOULD log:
 - Message send/receive events with `message_id`, `action`, and `trace_id`.
 - Retry attempts with delay and attempt number.
 - Final failure with error type and total attempts.
 
-The protocol library SHOULD expose hooks for custom loggers and structured log fields.
+The protocol library SHOULD expose hooks for custom loggers and structured log fields. Implementations SHOULD emit corresponding `TraceEvent` objects for all logged events to enable cross-system observability.
 
 ---
 
@@ -1340,6 +1526,386 @@ SDK implementations SHOULD provide a bridge module that:
 4. Passes through JSON-RPC notifications (no `id`) as fire-and-forget AIP messages.
 
 This enables an AIP agent to serve both native AIP clients and JSON-RPC 2.0 clients (including A2A) on the same endpoint by content-sniffing the `jsonrpc` field.
+
+## 15. Agent Onboarding Protocol
+
+### 15.1 Overview
+
+Sections 2–14 define how agents talk to each other. This section defines how any agent — regardless of its origin, framework, or native protocol — **joins an AIP management platform** and becomes a first-class participant in a multi-agent network.
+
+The Agent Onboarding Protocol covers the complete lifecycle:
+
+```
+┌─────────┐     ┌───────────┐     ┌─────────┐     ┌───────────┐     ┌────────────┐
+│ Register │────►│ Handshake │────►│  Active  │────►│ Degraded/ │────►│ Deregister │
+│          │     │ (verify)  │     │ (heart-  │     │  Failed   │     │            │
+└─────────┘     └───────────┘     │  beating)│     └───────────┘     └────────────┘
+                                  └──────────┘
+```
+
+### 15.2 Onboarding Modes
+
+An agent joins the platform in one of three modes, depending on its capabilities:
+
+| Mode | Agent implements | How it joins | Capability level |
+|------|------------------|--------------|------------------|
+| **Native** | `GET /v1/status` + `POST /v1/aip` | Registers directly | Full |
+| **Adapted** | Any HTTP API | Via an AIP adapter (sidecar/function) that translates | Full (through adapter) |
+| **Declared** | Nothing accessible | Platform operator manually declares the agent | Discovery-only (no messaging) |
+
+All three modes use the same registry endpoints. The platform treats them identically after onboarding.
+
+### 15.3 Registry Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST /v1/registry/agents` | Register | Agent (or adapter, or operator) announces the agent. |
+| `GET /v1/registry/agents` | List | List registered agents, filterable. |
+| `GET /v1/registry/agents/{agent_id}` | Get | Get a single registration record + cached status. |
+| `PATCH /v1/registry/agents/{agent_id}` | Update | Update registration (e.g., new base_url after migration). |
+| `DELETE /v1/registry/agents/{agent_id}` | Deregister | Gracefully remove the agent. |
+| `POST /v1/registry/agents/{agent_id}/heartbeat` | Heartbeat | Agent signals liveness + lightweight metrics. |
+
+These endpoints are implemented by the **platform**, not by individual agents.
+
+### 15.4 Registration (`POST /v1/registry/agents`)
+
+#### 15.4.1 Request
+
+```json
+{
+  "base_url": "https://my-agent.example.com",
+  "namespace": "acme-corp",
+  "credentials": {
+    "platform_to_agent": {
+      "scheme": "bearer",
+      "token": "agent-secret-xyz"
+    },
+    "agent_to_platform": {
+      "scheme": "bearer",
+      "token": "platform-secret-abc"
+    }
+  },
+  "tags": ["gpu", "reasoning", "code-generation"],
+  "mode": "native"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `base_url` | string | REQUIRED | Agent's root URL. Platform will probe `{base_url}/v1/status`. |
+| `namespace` | string \| null | OPTIONAL | Requested namespace. Platform MAY override. Default: `null` (default namespace). |
+| `credentials` | object \| null | OPTIONAL | Mutual authentication credentials (see 15.4.2). |
+| `tags` | array[string] | OPTIONAL | Additional discovery tags. |
+| `mode` | string | OPTIONAL | One of `"native"`, `"adapted"`, `"declared"`. Default: `"native"`. |
+| `metadata` | object \| null | OPTIONAL | Arbitrary key-value pairs for the platform. |
+
+#### 15.4.2 Mutual Authentication (`credentials`)
+
+Registration establishes a **two-way trust** between platform and agent:
+
+| Field | Purpose |
+|-------|---------|
+| `credentials.platform_to_agent` | Token the **platform** uses when calling the agent's endpoints. The agent validates this on incoming requests. |
+| `credentials.agent_to_platform` | Token the **agent** uses when calling the platform (heartbeat, callbacks). The platform validates this on incoming requests. |
+
+Each credential contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `scheme` | string | `"bearer"`, `"api_key"`, `"hmac"`. |
+| `token` | string | The secret value. |
+| `header` | string \| null | Custom header name (for `api_key` scheme). Default: `Authorization`. |
+
+If `credentials` is omitted, the platform and agent communicate without authentication (suitable for same-network / development use).
+
+#### 15.4.3 Handshake Sequence
+
+When the platform receives a registration request:
+
+```
+Agent/Adapter                         Platform
+     │                                    │
+     │  POST /v1/registry/agents          │
+     │  { base_url, credentials, ... }    │
+     │──────────────────────────────────►│
+     │                                    │
+     │     ┌──────────────────────────┐   │
+     │     │ 1. Validate request      │   │
+     │     │ 2. Probe GET {base_url}/ │   │
+     │     │    v1/status             │   │
+     │◄────│    (with platform_to_    │   │
+     │     │     agent credential)    │   │
+     │────►│ 3. Validate AgentStatus  │   │
+     │     │ 4. Check version compat  │   │
+     │     │ 5. Check namespace quota │   │
+     │     │ 6. Store registration    │   │
+     │     └──────────────────────────┘   │
+     │                                    │
+     │  201 Created                       │
+     │  { agent_id, heartbeat_url,        │
+     │    heartbeat_interval, ... }       │
+     │◄──────────────────────────────────│
+     │                                    │
+     │  POST heartbeat (every 10s)        │
+     │──────────────────────────────────►│
+     │  { ack: true }                     │
+     │◄──────────────────────────────────│
+```
+
+**Handshake validation steps (server MUST perform in order):**
+
+1. **Schema validation** — request conforms to the registration schema.
+2. **Status probe** — `GET {base_url}/v1/status` succeeds within 10 seconds (using `platform_to_agent` credential if provided).
+3. **AgentStatus validation** — response contains at least `agent_id` and `role`.
+4. **Version compatibility** — `supported_versions` in the status response includes at least one version the platform supports.
+5. **Namespace authorization** — the caller is allowed to register in the requested namespace.
+6. **Quota check** — the namespace has not reached its agent limit.
+7. **Duplicate check** — no existing active registration with the same `agent_id` in this namespace.
+
+If any step fails, the platform returns the appropriate error code (see 15.10) and does NOT create the registration.
+
+#### 15.4.4 Registration Response (201 Created)
+
+```json
+{
+  "agent_id": "my-agent",
+  "base_url": "https://my-agent.example.com",
+  "namespace": "acme-corp",
+  "mode": "native",
+  "registered_at": "2026-03-12T10:00:00Z",
+  "status": "active",
+  "heartbeat_interval_seconds": 10,
+  "heartbeat_url": "https://platform.example.com/v1/registry/agents/my-agent/heartbeat",
+  "platform_aip_url": "https://platform.example.com/v1/aip",
+  "capabilities_detected": ["streaming", "tasks", "artifacts"],
+  "cached_status": { "...full AgentStatus from probe..." }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `agent_id` | string | The agent's ID (from its AgentStatus). |
+| `base_url` | string | Echoed back. |
+| `namespace` | string | Assigned namespace (may differ from requested). |
+| `mode` | string | Onboarding mode. |
+| `registered_at` | string | ISO 8601 timestamp. |
+| `status` | string | `"active"`, `"degraded"`, or `"failed"`. |
+| `heartbeat_interval_seconds` | integer | How often the agent should heartbeat. Default: `10`. |
+| `heartbeat_url` | string | Full URL for heartbeat POSTs. |
+| `platform_aip_url` | string | The platform's AIP messaging endpoint — agents can send messages here. |
+| `capabilities_detected` | array[string] | What the platform detected the agent supports (see 15.5). |
+| `cached_status` | AgentStatus | The full AgentStatus from the probe. |
+
+### 15.5 Capability Detection
+
+During the handshake, the platform probes the agent to determine its capability level. This enables the platform to know **exactly** what it can ask this agent to do.
+
+| Capability | How detected | Meaning |
+|------------|-------------|---------|
+| `status` | `GET /v1/status` returns 200 | Agent supports discovery. |
+| `messaging` | `POST /v1/aip` with a `request_context` ping returns 200 | Agent accepts AIP messages. |
+| `streaming` | `POST /v1/aip` with `Accept: text/event-stream` returns SSE | Agent supports SSE streaming. |
+| `tasks` | `GET /v1/tasks/nonexistent` returns 404 (not 405/501) | Agent implements the Task API. |
+| `artifacts` | `POST /v1/artifacts` returns 415 or 201 (not 405/501) | Agent supports file upload. |
+| `callbacks` | `callback_url` field is echoed in AIPAck | Agent supports webhook callbacks. |
+
+The `capabilities_detected` array in the registration response tells the agent (and platform operators) exactly what works. The platform SHOULD NOT send streaming requests to agents without the `streaming` capability.
+
+### 15.6 Heartbeat (`POST /v1/registry/agents/{agent_id}/heartbeat`)
+
+#### 15.6.1 Request
+
+```json
+{
+  "ok": true,
+  "lifecycle": "running",
+  "pending_tasks": 3,
+  "recent_errors": 0,
+  "metrics": {
+    "cpu_percent": 45.2,
+    "memory_mb": 1024,
+    "avg_response_ms": 230
+  },
+  "timestamp": "2026-03-12T10:05:00Z"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ok` | boolean | OPTIONAL | Agent is healthy. Default: `true`. |
+| `lifecycle` | string | OPTIONAL | Current lifecycle state. |
+| `pending_tasks` | integer | OPTIONAL | Number of in-flight tasks. |
+| `recent_errors` | integer | OPTIONAL | Error count since last heartbeat. |
+| `metrics` | object \| null | OPTIONAL | Custom operational metrics (cpu, memory, latency, etc.). |
+| `timestamp` | string | REQUIRED | ISO 8601 UTC timestamp. |
+
+#### 15.6.2 Response
+
+```json
+{
+  "ack": true,
+  "next_heartbeat_at": "2026-03-12T10:05:10Z",
+  "commands": []
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ack` | boolean | `true` if heartbeat accepted. |
+| `next_heartbeat_at` | string | When to send the next heartbeat. |
+| `commands` | array[Command] | Platform-to-agent commands (see 15.6.3). |
+
+#### 15.6.3 Platform Commands via Heartbeat
+
+The heartbeat response MAY include **commands** — instructions from the platform to the agent. This enables the platform to control agents without initiating a separate connection.
+
+| Command `type` | Description | Payload |
+|----------------|-------------|---------|
+| `refresh_status` | Agent should re-announce its status (e.g., after a skill update). | `{}` |
+| `drain` | Agent should stop accepting new tasks and finish existing ones. | `{ "reason": "..." }` |
+| `shutdown` | Agent should gracefully shut down and deregister. | `{ "reason": "...", "deadline": "..." }` |
+| `update_config` | Platform pushes configuration to the agent. | `{ "config": { ... } }` |
+| `re_register` | Agent should re-register (e.g., after platform migration). | `{ "new_platform_url": "..." }` |
+
+```json
+{
+  "ack": true,
+  "next_heartbeat_at": "2026-03-12T10:05:10Z",
+  "commands": [
+    { "type": "drain", "payload": { "reason": "Platform maintenance at 11:00 UTC" } }
+  ]
+}
+```
+
+Agents SHOULD process commands and reflect the result in the next heartbeat. Agents MAY ignore commands they don't understand.
+
+#### 15.6.4 Timeout and Lifecycle Rules
+
+| Condition | Platform action |
+|-----------|-----------------|
+| Heartbeat received, `ok: true` | Status: `active`, lifecycle from heartbeat. |
+| Heartbeat received, `ok: false` | Status: `active`, lifecycle: `degraded`. |
+| No heartbeat for **3× interval** (30s at 10s interval) | Probe `GET {base_url}/v1/status`. If reachable: `degraded`. If unreachable: `failed`. |
+| No heartbeat for **10× interval** (100s at 10s interval) | Status: `failed`. Platform MAY auto-deregister. Platform MUST emit event `agent.failed`. |
+| Heartbeat resumes after failure | Status: `active`. Platform MUST emit event `agent.recovered`. |
+
+### 15.7 Platform Events (Webhooks)
+
+The platform SHOULD emit events when agent status changes. Platform operators and other agents can subscribe to these events.
+
+| Event | Trigger |
+|-------|---------|
+| `agent.registered` | New agent successfully registered. |
+| `agent.deregistered` | Agent removed from registry. |
+| `agent.degraded` | Agent health dropped to degraded. |
+| `agent.failed` | Agent is unreachable / heartbeat timeout. |
+| `agent.recovered` | Agent came back from degraded/failed to active. |
+| `agent.status_changed` | Any change in the cached AgentStatus (new skills, lifecycle change, etc.). |
+
+Events are delivered as AIP messages to subscribers:
+
+```json
+{
+  "version": "1.0",
+  "message_id": "evt-001",
+  "from": "platform",
+  "to": "subscriber-agent",
+  "action": "publish_status",
+  "intent": "Agent agent-backend is now degraded",
+  "payload": {
+    "event": "agent.degraded",
+    "agent_id": "agent-backend",
+    "namespace": "acme-corp",
+    "previous_status": "active",
+    "current_status": "degraded",
+    "reason": "heartbeat_timeout"
+  }
+}
+```
+
+### 15.8 Listing and Search (`GET /v1/registry/agents`)
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `namespace` | string | Filter by namespace. |
+| `role` | string | Filter by role. |
+| `lifecycle` | string | Filter by lifecycle state. |
+| `status` | string | Filter by registration status (`active`, `degraded`, `failed`). |
+| `mode` | string | Filter by onboarding mode (`native`, `adapted`, `declared`). |
+| `category` | string | Filter by `presentation.categories` value. |
+| `skill` | string | Filter by skill ID or tag. |
+| `ok` | boolean | Filter by health. |
+| `q` | string | Free-text search across display_name, tagline, description, skill names. |
+| `sort` | string | Sort field: `registered_at`, `last_heartbeat_at`, `agent_id`. Default: `registered_at`. |
+| `order` | string | `asc` or `desc`. Default: `desc`. |
+| `limit` | integer | Page size. Default: `50`. Max: `200`. |
+| `offset` | integer | Pagination offset. Default: `0`. |
+
+**Response:**
+
+```json
+{
+  "agents": [
+    {
+      "agent_id": "agent-backend",
+      "base_url": "https://my-agent.example.com",
+      "namespace": "acme-corp",
+      "mode": "native",
+      "status": "active",
+      "capabilities_detected": ["status", "messaging", "streaming", "tasks", "artifacts"],
+      "registered_at": "2026-03-12T10:00:00Z",
+      "last_heartbeat_at": "2026-03-12T10:05:30Z",
+      "cached_status": { "...full AgentStatus with presentation, skills, auth..." }
+    }
+  ],
+  "total": 42,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### 15.9 Update (`PATCH /v1/registry/agents/{agent_id}`)
+
+Used when an agent migrates to a new URL, changes namespace, or rotates credentials.
+
+```json
+{
+  "base_url": "https://new-host.example.com",
+  "credentials": {
+    "platform_to_agent": { "scheme": "bearer", "token": "new-token" }
+  }
+}
+```
+
+The platform MUST re-probe `GET {new_base_url}/v1/status` before accepting the update. Returns `200 OK` with the updated `AgentRegistrationRecord`.
+
+### 15.10 Deregistration (`DELETE /v1/registry/agents/{agent_id}`)
+
+Graceful removal. The platform:
+
+1. Returns `204 No Content`.
+2. Stops expecting heartbeats.
+3. Emits `agent.deregistered` event.
+4. Removes the agent from discovery results.
+5. Does NOT cancel in-flight tasks (the caller is responsible for draining first).
+
+Agents SHOULD call this endpoint before shutting down. If they don't, the heartbeat timeout mechanism handles it.
+
+### 15.11 Error Codes
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/registry/unreachable` | 422 | Platform could not reach `{base_url}/v1/status` during handshake. |
+| `aip/registry/invalid_status` | 422 | Status response did not conform to AgentStatus schema. |
+| `aip/registry/version_incompatible` | 422 | No mutually supported protocol version. |
+| `aip/registry/duplicate` | 409 | An agent with this `agent_id` is already registered in this namespace. |
+| `aip/registry/namespace_denied` | 403 | Caller is not authorized for the requested namespace. |
+| `aip/registry/quota_exceeded` | 429 | Namespace has reached its maximum agent count. |
+| `aip/registry/auth_failed` | 401 | The provided credentials could not be validated. |
+| `aip/registry/not_found` | 404 | Agent not found in registry (for heartbeat/update/delete). |
+
+---
 
 ## Appendix C: Relationship to Other Protocols
 
