@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument(
         "--api-format",
         default=_env("API_FORMAT", "generic"),
-        choices=["generic", "openai", "anthropic", "raw"],
+        choices=["generic", "openai", "anthropic", "dify", "coze", "raw"],
         help="Agent API message format (default: generic)",
     )
     g.add_argument(

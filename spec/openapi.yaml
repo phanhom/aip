@@ -2,7 +2,7 @@ openapi: "3.1.0"
 
 info:
   title: Agent Interaction Protocol (AIP)
-  version: "1.1.0"
+  version: "1.1.1"
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     

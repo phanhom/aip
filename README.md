@@ -77,26 +77,125 @@ pip install aip-protocol[bridge] && aip bridge --agent <url> --platform <url> --
 
 The bridge auto-detects the protocol from the URL scheme, exposes `GET /v1/status` + `POST /v1/aip`, registers with the platform, and starts heartbeating — all automatically.
 
-| Scenario | Command |
-|----------|---------|
-| **HTTP REST agent** | `aip bridge --agent http://localhost:8080/chat --platform https://hive.example.com --secret sk-xxx` |
-| **WebSocket agent** | `aip bridge --agent ws://localhost:18789 --platform https://hive.example.com --secret sk-xxx` |
-| **Subprocess (stdin/stdout)** | `aip bridge --agent "stdio:python my_agent.py" --platform https://hive.example.com --secret sk-xxx` |
-| **OpenAI-compatible API** | `aip bridge --agent http://localhost:11434/v1/chat/completions --api-format openai --platform https://hive.example.com --secret sk-xxx` |
-| **Remote machine (LAN)** | `aip bridge --agent http://192.168.1.100:5000/api --platform https://hive.example.com --secret sk-xxx --name "GPU Server"` |
-| **Behind NAT / tunnel** | `aip bridge --agent http://localhost:8080 --platform https://hive.example.com --secret sk-xxx --public-url https://my-agent.ngrok.io` |
-| **Full identity** | `aip bridge --agent ws://10.0.0.5:8080 --platform https://hive.example.com --secret sk-xxx --name "CodeBot" --namespace my-team --tags code,review --color "#4A90D9"` |
-| **Standalone (no platform)** | `aip bridge --agent http://localhost:8080/chat --port 9090` |
+### Real-World Examples
 
-Or use environment variables — ideal for servers, Docker, and CI:
+**OpenClaw** (local, port 18789, OpenAI-compatible):
 
 ```bash
-export AIP_BRIDGE_AGENT=ws://localhost:18789
+aip bridge \
+  --agent http://127.0.0.1:18789/v1/chat/completions \
+  --api-format openai \
+  --agent-secret "$OPENCLAW_GATEWAY_TOKEN" \
+  --platform https://hive.example.com --secret sk-xxx \
+  --name "OpenClaw" --tags coding,agent --color "#10B981"
+```
+
+**Ollama** (local LLM, port 11434):
+
+```bash
+aip bridge \
+  --agent http://localhost:11434/v1/chat/completions \
+  --api-format openai \
+  --platform https://hive.example.com --secret sk-xxx \
+  --name "Ollama Llama3" --tags llm,local
+```
+
+**Dify** (self-hosted or cloud):
+
+```bash
+aip bridge \
+  --agent https://api.dify.ai/v1/chat-messages \
+  --api-format dify \
+  --agent-secret "app-YOUR_DIFY_API_KEY" \
+  --platform https://hive.example.com --secret sk-xxx \
+  --name "Dify Workflow" --tags workflow,chat
+```
+
+**Coze** (ByteDance, cloud):
+
+```bash
+aip bridge \
+  --agent https://api.coze.com/open_api/v2/chat \
+  --api-format coze \
+  --agent-secret "$COZE_ACCESS_TOKEN" \
+  --platform https://hive.example.com --secret sk-xxx \
+  --name "Coze Bot" --tags bot,chat
+```
+
+**Any OpenAI-compatible server** (vLLM, LiteLLM, LocalAI, LM Studio, etc.):
+
+```bash
+aip bridge \
+  --agent http://192.168.1.100:8000/v1/chat/completions \
+  --api-format openai \
+  --platform https://hive.example.com --secret sk-xxx \
+  --name "GPU Server" --tags llm,inference
+```
+
+**Custom HTTP agent** (any REST endpoint):
+
+```bash
+aip bridge \
+  --agent http://localhost:8080/chat \
+  --platform https://hive.example.com --secret sk-xxx
+```
+
+**Subprocess** (stdin/stdout JSONL — wrap any CLI tool):
+
+```bash
+aip bridge \
+  --agent "stdio:python my_agent.py" \
+  --platform https://hive.example.com --secret sk-xxx \
+  --name "Local Script"
+```
+
+**Behind NAT / tunnel** (ngrok, Cloudflare Tunnel, frp, etc.):
+
+```bash
+aip bridge \
+  --agent http://localhost:8080 \
+  --platform https://hive.example.com --secret sk-xxx \
+  --public-url https://my-agent.ngrok.io
+```
+
+**Standalone mode** (no platform, just expose as AIP endpoint):
+
+```bash
+aip bridge --agent http://localhost:11434/v1/chat/completions --api-format openai --port 9090
+```
+
+### Environment Variables
+
+All flags work as `AIP_BRIDGE_*` env vars — ideal for servers, Docker, and CI:
+
+```bash
+export AIP_BRIDGE_AGENT=http://127.0.0.1:18789/v1/chat/completions
+export AIP_BRIDGE_API_FORMAT=openai
+export AIP_BRIDGE_AGENT_SECRET=gw-token-xxx
 export AIP_BRIDGE_PLATFORM=https://hive.example.com
 export AIP_BRIDGE_SECRET=sk-xxx
-export AIP_BRIDGE_NAME="My Agent"
+export AIP_BRIDGE_NAME="OpenClaw"
 aip bridge
 ```
+
+### Compatibility Matrix
+
+| Agent / Platform | `--api-format` | `--agent` URL | Notes |
+|-----------------|---------------|---------------|-------|
+| **OpenClaw** | `openai` | `http://127.0.0.1:18789/v1/chat/completions` | Set `--agent-secret` to gateway token |
+| **Ollama** | `openai` | `http://localhost:11434/v1/chat/completions` | No auth needed for local |
+| **vLLM** | `openai` | `http://host:8000/v1/chat/completions` | OpenAI-compatible |
+| **LiteLLM** | `openai` | `http://host:4000/v1/chat/completions` | OpenAI-compatible proxy |
+| **LM Studio** | `openai` | `http://localhost:1234/v1/chat/completions` | OpenAI-compatible |
+| **LocalAI** | `openai` | `http://localhost:8080/v1/chat/completions` | OpenAI-compatible |
+| **Dify** | `dify` | `https://api.dify.ai/v1/chat-messages` | Or self-hosted URL |
+| **Coze** | `coze` | `https://api.coze.com/open_api/v2/chat` | Or `api.coze.cn` for China |
+| **OpenAI API** | `openai` | `https://api.openai.com/v1/chat/completions` | Direct OpenAI access |
+| **Anthropic API** | `anthropic` | `https://api.anthropic.com/v1/messages` | Direct Claude access |
+| **Custom REST** | `generic` | `http://host:port/your/endpoint` | Expects `{"message":...}` → `{"response":...}` |
+| **Custom WebSocket** | `generic` | `ws://host:port/ws` | JSON over WebSocket |
+| **Subprocess** | `generic` | `stdio:python agent.py` | JSONL over stdin/stdout |
+| **Any other** | `raw` | any URL | Passes AIP fields through unchanged |
 
 <details>
 <summary>All flags reference</summary>
@@ -108,7 +207,7 @@ Agent connection:
   --agent URL             Agent URL (http://, ws://, stdio:cmd)
   --agent-secret KEY      Auth token for the external agent
   --protocol http|ws|stdio  Override auto-detection
-  --api-format generic|openai|anthropic|raw  Message format (default: generic)
+  --api-format FORMAT     generic|openai|anthropic|dify|coze|raw (default: generic)
   --timeout SEC           Agent call timeout (default: 120)
 
 Platform registration:

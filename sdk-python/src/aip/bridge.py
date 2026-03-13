@@ -247,6 +247,67 @@ class AnthropicFormatter(Formatter):
         return super().decode_response(data)
 
 
+class DifyFormatter(Formatter):
+    """For Dify.ai chat applications (POST /v1/chat-messages)."""
+
+    def __init__(self, user: str = "aip-bridge"):
+        self.user = user
+
+    def encode(self, intent: str, payload: dict | None) -> dict:
+        body: dict = {
+            "query": intent,
+            "response_mode": "blocking",
+            "user": self.user,
+            "inputs": {},
+        }
+        if payload:
+            cid = payload.get("conversation_id")
+            if cid:
+                body["conversation_id"] = cid
+            if payload.get("inputs"):
+                body["inputs"] = payload["inputs"]
+        return body
+
+    def decode_response(self, data: dict) -> str:
+        if "answer" in data:
+            return data["answer"]
+        return super().decode_response(data)
+
+
+class CozeFormatter(Formatter):
+    """For Coze (ByteDance) bots (POST /open_api/v2/chat)."""
+
+    def __init__(self, bot_id: str = "", user: str = "aip-bridge"):
+        self.bot_id = bot_id
+        self.user = user
+
+    def encode(self, intent: str, payload: dict | None) -> dict:
+        body: dict = {
+            "query": intent,
+            "stream": False,
+            "user": self.user,
+        }
+        if self.bot_id:
+            body["bot_id"] = self.bot_id
+        if payload:
+            if payload.get("bot_id"):
+                body["bot_id"] = payload["bot_id"]
+            if payload.get("conversation_id"):
+                body["conversation_id"] = payload["conversation_id"]
+        return body
+
+    def decode_response(self, data: dict) -> str:
+        messages = data.get("messages", [])
+        if messages:
+            for m in reversed(messages):
+                if m.get("role") == "assistant" and m.get("type") == "answer":
+                    return m.get("content", "")
+            return messages[-1].get("content", json.dumps(data))
+        if "answer" in data:
+            return data["answer"]
+        return super().decode_response(data)
+
+
 class RawFormatter(Formatter):
     """Passes the full AIP message fields through without transformation."""
 
@@ -313,7 +374,16 @@ def build_formatter(api_format: str = "generic", **kw) -> Formatter:
         case "openai":
             return OpenAIFormatter(model=kw.get("model", "default"))
         case "anthropic":
-            return AnthropicFormatter(model=kw.get("model", "claude-sonnet-4-20250514"))
+            return AnthropicFormatter(
+                model=kw.get("model", "claude-sonnet-4-20250514"),
+            )
+        case "dify":
+            return DifyFormatter(user=kw.get("user", "aip-bridge"))
+        case "coze":
+            return CozeFormatter(
+                bot_id=kw.get("bot_id", ""),
+                user=kw.get("user", "aip-bridge"),
+            )
         case "raw":
             return RawFormatter()
         case _:
