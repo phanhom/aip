@@ -1892,7 +1892,56 @@ Graceful removal. The platform:
 
 Agents SHOULD call this endpoint before shutting down. If they don't, the heartbeat timeout mechanism handles it.
 
-### 15.11 Error Codes
+### 15.11 Probe (`POST /v1/registry/agents/{agent_id}/probe`)
+
+Platform-initiated health check — the "click retry" action. Used when a human operator or automated system wants to **immediately** verify whether a failed agent has recovered, without waiting for the next heartbeat.
+
+**Request:** Empty body (`{}`). The platform uses its own stored `base_url` and credentials.
+
+**Platform behavior:**
+
+1. Look up the agent's `base_url` and `platform_to_agent` credential from the registry.
+2. Call `GET {base_url}/v1/status` with a **5-second timeout**.
+3. If the agent responds with a valid `AgentStatus`:
+   - Update the agent's cached status.
+   - Set lifecycle to the value from the response (typically `running`).
+   - Mark as `active`.
+   - Reset heartbeat tracking (expect next heartbeat within 1× interval).
+   - Emit `agent.recovered` event if previously `failed` or `degraded`.
+   - Return `200 OK` with the fresh `AgentStatus`.
+4. If the agent does not respond or returns an error:
+   - Keep the agent's current failed status.
+   - Return `422` with error code `aip/registry/unreachable`.
+
+**Success response (200):**
+
+```json
+{
+  "agent_id": "claw-a",
+  "status": "active",
+  "lifecycle": "running",
+  "probed_at": "2026-03-12T12:00:00Z",
+  "cached_status": { "...fresh AgentStatus from probe..." }
+}
+```
+
+**Failure response (422):**
+
+```json
+{
+  "error_code": "aip/registry/unreachable",
+  "error_message": "Agent claw-a did not respond within 5s at http://192.168.1.10:9090",
+  "probed_at": "2026-03-12T12:00:00Z"
+}
+```
+
+**Design notes:**
+
+- The probe endpoint is idempotent — calling it on a healthy agent is harmless (it refreshes the cached status).
+- Rate limiting: Platforms SHOULD limit probe frequency to prevent abuse (e.g., max 1 probe per agent per 5 seconds).
+- The probe does NOT re-register the agent. Registration data (credentials, namespace, endpoints) remains unchanged.
+
+### 15.12 Error Codes
 
 | Code | HTTP | Description |
 |------|------|-------------|

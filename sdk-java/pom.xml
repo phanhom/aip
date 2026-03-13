@@ -6,7 +6,7 @@
 
     <groupId>dev.aip-protocol</groupId>
     <artifactId>aip-sdk</artifactId>
-    <version>1.0.0</version>
+    <version>1.3.0</version>
     <packaging>jar</packaging>
     <name>AIP SDK</name>
     <description>Agent Interaction Protocol — Java SDK for agent-to-agent communication.</description>

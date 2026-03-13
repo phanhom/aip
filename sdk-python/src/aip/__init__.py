@@ -15,7 +15,7 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 from aip.bridge import BridgeConfig
 from aip.gateway import AgentEntry, GatewayConfig

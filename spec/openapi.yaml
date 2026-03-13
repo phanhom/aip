@@ -2,7 +2,7 @@ openapi: "3.1.0"
 
 info:
   title: Agent Interaction Protocol (AIP)
-  version: "1.2.1"
+  version: "1.3.0"
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     
@@ -647,6 +647,37 @@ paths:
         "404":
           description: Agent not found
 
+  /v1/registry/agents/{agent_id}/probe:
+    post:
+      operationId: probeAgent
+      summary: Platform-initiated health check (retry / reconnect)
+      description: |
+        Immediately probe a registered agent to check if it has recovered.
+        The platform calls GET {stored_base_url}/v1/status and updates the
+        registry accordingly. Idempotent — safe to call on healthy agents.
+      tags: [registry]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent is reachable — status refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResult"
+        "404":
+          description: Agent not found in registry
+        "422":
+          description: Agent unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResult"
+
   /v1/registry/agents/{agent_id}/heartbeat:
     post:
       operationId: agentHeartbeat
@@ -788,6 +819,28 @@ components:
         next_heartbeat_at:
           type: string
           format: date-time
+
+    ProbeResult:
+      type: object
+      required: [agent_id, probed_at]
+      description: Result of a platform-initiated health probe.
+      properties:
+        agent_id:
+          type: string
+        status:
+          type: string
+          enum: [active, failed]
+        lifecycle:
+          type: string
+        probed_at:
+          type: string
+          format: date-time
+        cached_status:
+          $ref: "#/components/schemas/AgentStatus"
+        error_code:
+          type: string
+        error_message:
+          type: string
 
     AIPMessage:
       type: object

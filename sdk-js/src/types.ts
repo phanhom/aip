@@ -247,7 +247,111 @@ export interface AIPTask {
   history?: AIPMessage[];
   error_code?: string | null;
   error_message?: string | null;
+  trace_id?: string | null;
+  correlation_id?: string | null;
+  parent_task_id?: string | null;
   metadata?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Status scope for hierarchical queries. */
+export type StatusScope = "self" | "subtree" | "colony";
+
+/** Aggregated status for a group of agents. */
+export interface GroupStatus {
+  ok: boolean;
+  service?: string;
+  namespace?: string;
+  root_agent_id?: string;
+  timestamp?: string;
+  agents?: AgentStatus[];
+  metadata?: Record<string, unknown> | null;
+}
+
+/** Tree node for recursive/hierarchical agent discovery. */
+export interface RecursiveStatusNode extends AgentStatus {
+  subordinates?: RecursiveStatusNode[];
+}
+
+/** Standard trace event types. */
+export type TraceType =
+  | "aip.message.sent"
+  | "aip.message.received"
+  | "task.created"
+  | "task.completed"
+  | "task.failed"
+  | "task.canceled"
+  | "llm.usage"
+  | "tool.call"
+  | "tool.result"
+  | "error"
+  | "log"
+  | "report"
+  | "conversation"
+  | "approval.requested"
+  | "approval.granted"
+  | "approval.denied"
+  | "agent.spawned"
+  | "agent.terminated";
+
+/** Trace severity levels (OpenTelemetry-aligned). */
+export type TraceSeverity = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL";
+
+/** Single observable event in the AIP system. */
+export interface TraceEvent {
+  event_id: string;
+  trace_id?: string;
+  span_id?: string;
+  parent_span_id?: string;
+  agent_id: string;
+  trace_type: TraceType;
+  severity?: TraceSeverity;
+  ts: string;
+  duration_ms?: number | null;
+  task_id?: string;
+  message_id?: string;
+  correlation_id?: string;
+  payload?: Record<string, unknown>;
+  tags?: Record<string, string>;
+}
+
+/** LLM invocation token and cost data. */
+export interface LLMUsage {
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd?: number | null;
+  duration_ms?: number | null;
+}
+
+/** Per-model breakdown in a usage summary. */
+export interface ModelUsageBreakdown {
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  invocations: number;
+}
+
+/** Per-agent breakdown in a usage summary. */
+export interface AgentUsageBreakdown {
+  agent_id: string;
+  total_tokens: number;
+  total_cost_usd: number;
+  invocations: number;
+}
+
+/** Aggregated LLM usage and cost summary. */
+export interface UsageSummary {
+  namespace?: string;
+  since?: string;
+  until?: string;
+  total_tokens: number;
+  total_cost_usd: number;
+  total_invocations: number;
+  by_model?: ModelUsageBreakdown[];
+  by_agent?: AgentUsageBreakdown[];
 }

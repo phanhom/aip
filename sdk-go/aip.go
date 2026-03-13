@@ -51,6 +51,13 @@ const (
 	RouteScopeRemote = "remote"
 )
 
+// Status scope constants.
+const (
+	StatusScopeSelf    = "self"
+	StatusScopeSubtree = "subtree"
+	StatusScopeColony  = "colony"
+)
+
 // Task state constants.
 const (
 	TaskStateSubmitted      = "submitted"
@@ -176,6 +183,9 @@ type AIPTask struct {
 	History      []AIPMessage           `json:"history,omitempty"`
 	ErrorCode    string                 `json:"error_code,omitempty"`
 	ErrorMessage string                 `json:"error_message,omitempty"`
+	TraceID      string                 `json:"trace_id,omitempty"`
+	CorrelationID string                `json:"correlation_id,omitempty"`
+	ParentTaskID string                 `json:"parent_task_id,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt    string                 `json:"created_at"`
 	UpdatedAt    string                 `json:"updated_at"`
@@ -262,6 +272,113 @@ type AgentStatus struct {
 	LastMessageAt      string                 `json:"last_message_at,omitempty"`
 	LastSeenAt         string                 `json:"last_seen_at,omitempty"`
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// GroupStatus is the aggregated status for a group of agents.
+type GroupStatus struct {
+	OK          bool                   `json:"ok"`
+	Service     string                 `json:"service,omitempty"`
+	Namespace   string                 `json:"namespace,omitempty"`
+	RootAgentID string                 `json:"root_agent_id,omitempty"`
+	Timestamp   string                 `json:"timestamp,omitempty"`
+	Agents      []AgentStatus          `json:"agents,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// RecursiveStatusNode is a tree node for hierarchical agent discovery.
+type RecursiveStatusNode struct {
+	AgentStatus
+	Subordinates []RecursiveStatusNode `json:"subordinates,omitempty"`
+}
+
+// Trace type constants for observability.
+const (
+	TraceTypeMessageSent     = "aip.message.sent"
+	TraceTypeMessageReceived = "aip.message.received"
+	TraceTypeTaskCreated     = "task.created"
+	TraceTypeTaskCompleted   = "task.completed"
+	TraceTypeTaskFailed      = "task.failed"
+	TraceTypeTaskCanceled    = "task.canceled"
+	TraceTypeLLMUsage        = "llm.usage"
+	TraceTypeToolCall        = "tool.call"
+	TraceTypeToolResult      = "tool.result"
+	TraceTypeError           = "error"
+	TraceTypeLog             = "log"
+	TraceTypeReport          = "report"
+	TraceTypeConversation    = "conversation"
+	TraceTypeApproval        = "approval.requested"
+	TraceTypeApprovalGranted = "approval.granted"
+	TraceTypeApprovalDenied  = "approval.denied"
+	TraceTypeAgentSpawned    = "agent.spawned"
+	TraceTypeAgentTerminated = "agent.terminated"
+)
+
+// Trace severity constants (OpenTelemetry-aligned).
+const (
+	TraceSeverityTrace = "TRACE"
+	TraceSeverityDebug = "DEBUG"
+	TraceSeverityInfo  = "INFO"
+	TraceSeverityWarn  = "WARN"
+	TraceSeverityError = "ERROR"
+	TraceSeverityFatal = "FATAL"
+)
+
+// TraceEvent is a single observable event in the AIP system.
+type TraceEvent struct {
+	EventID       string                 `json:"event_id"`
+	TraceID       string                 `json:"trace_id,omitempty"`
+	SpanID        string                 `json:"span_id,omitempty"`
+	ParentSpanID  string                 `json:"parent_span_id,omitempty"`
+	AgentID       string                 `json:"agent_id"`
+	TraceType     string                 `json:"trace_type"`
+	Severity      string                 `json:"severity,omitempty"`
+	Timestamp     string                 `json:"ts"`
+	DurationMs    *float64               `json:"duration_ms,omitempty"`
+	TaskID        string                 `json:"task_id,omitempty"`
+	MessageID     string                 `json:"message_id,omitempty"`
+	CorrelationID string                 `json:"correlation_id,omitempty"`
+	Payload       map[string]interface{} `json:"payload,omitempty"`
+	Tags          map[string]string      `json:"tags,omitempty"`
+}
+
+// LLMUsage tracks token and cost data for a single LLM invocation.
+type LLMUsage struct {
+	Model             string   `json:"model"`
+	PromptTokens      int      `json:"prompt_tokens"`
+	CompletionTokens  int      `json:"completion_tokens"`
+	TotalTokens       int      `json:"total_tokens"`
+	EstimatedCostUSD  *float64 `json:"estimated_cost_usd,omitempty"`
+	DurationMs        *float64 `json:"duration_ms,omitempty"`
+}
+
+// UsageSummary is an aggregated cost/usage report.
+type UsageSummary struct {
+	Namespace        string                `json:"namespace,omitempty"`
+	Since            string                `json:"since,omitempty"`
+	Until            string                `json:"until,omitempty"`
+	TotalTokens      int                   `json:"total_tokens"`
+	TotalCostUSD     float64               `json:"total_cost_usd"`
+	TotalInvocations int                   `json:"total_invocations"`
+	ByModel          []ModelUsageBreakdown `json:"by_model,omitempty"`
+	ByAgent          []AgentUsageBreakdown `json:"by_agent,omitempty"`
+}
+
+// ModelUsageBreakdown is per-model cost data within a UsageSummary.
+type ModelUsageBreakdown struct {
+	Model            string  `json:"model"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	TotalCostUSD     float64 `json:"total_cost_usd"`
+	Invocations      int     `json:"invocations"`
+}
+
+// AgentUsageBreakdown is per-agent cost data within a UsageSummary.
+type AgentUsageBreakdown struct {
+	AgentID      string  `json:"agent_id"`
+	TotalTokens  int     `json:"total_tokens"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	Invocations  int     `json:"invocations"`
 }
 
 // BuildMessage creates an AIPMessage with required fields and sensible defaults.

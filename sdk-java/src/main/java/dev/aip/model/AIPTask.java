@@ -25,6 +25,9 @@ public record AIPTask(
         @JsonProperty("history") List<Map<String, Object>> history,
         @JsonProperty("error_code") String errorCode,
         @JsonProperty("error_message") String errorMessage,
+        @JsonProperty("trace_id") String traceId,
+        @JsonProperty("correlation_id") String correlationId,
+        @JsonProperty("parent_task_id") String parentTaskId,
         @JsonProperty("metadata") Map<String, Object> metadata,
         @JsonProperty("created_at") String createdAt,
         @JsonProperty("updated_at") String updatedAt
