@@ -1,25 +1,29 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
 *.egg-info/
 dist/
 build/
 .eggs/
-*.egg
-.venv/
-venv/
-env/
-.env
-node_modules/
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
-.coverage
-htmlcov/
-*.so
-*.dylib
-.DS_Store
-Thumbs.db
+
+# Java
+target/
+*.class
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
 *.swp
 *.swo
-*~
+.DS_Store
+
+# Environment
+.env
+*.local
