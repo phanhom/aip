@@ -1907,6 +1907,181 @@ Agents SHOULD call this endpoint before shutting down. If they don't, the heartb
 
 ---
 
+## 16. Multi-Agent Gateway
+
+A single host frequently runs multiple agents — a coding agent, a search agent, a review agent, etc. Rather than burning one port per agent, AIP defines a **gateway** pattern: one process, one port, N agents, with standard discovery, routing, and isolation semantics.
+
+### 16.1 URL Convention
+
+A gateway exposes both **gateway-level** and **per-agent** endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/agents` | `GET` | List all hosted agents (discovery) |
+| `/v1/agents/{agent_id}/status` | `GET` | AgentStatus for a specific agent |
+| `/v1/agents/{agent_id}/aip` | `POST` | Send AIPMessage to a specific agent |
+| `/v1/status` | `GET` | GroupStatus aggregating all hosted agents |
+| `/v1/aip` | `POST` | Route message using the `to` field |
+| `/health` | `GET` | Gateway health check |
+
+Single-agent hosts MAY omit the `/v1/agents/` prefix and serve only the standard `/v1/status` and `/v1/aip` endpoints. Multi-agent hosts MUST implement both layers.
+
+### 16.2 Discovery (`GET /v1/agents`)
+
+Returns an array of `AgentStatus` objects — one per hosted agent.
+
+```json
+[
+  {
+    "agent_id": "coder",
+    "role": "coder",
+    "namespace": "my-team",
+    "lifecycle": "running",
+    "ok": true,
+    "presentation": { "display_name": "OpenClaw Coder", "color": "#10B981" },
+    "endpoints": {
+      "aip": "https://gw.example.com/v1/agents/coder/aip",
+      "status": "https://gw.example.com/v1/agents/coder/status"
+    }
+  },
+  {
+    "agent_id": "llama",
+    "role": "assistant",
+    "namespace": "my-team",
+    "lifecycle": "running",
+    "ok": true,
+    "presentation": { "display_name": "Ollama Llama3", "color": "#3B82F6" }
+  }
+]
+```
+
+### 16.3 Message Routing (`POST /v1/aip`)
+
+When a gateway receives a message at the root `/v1/aip`:
+
+1. Inspect the `to` field in the AIPMessage.
+2. If `to` matches a hosted `agent_id`, route to that agent's backend.
+3. If `to` does not match any hosted agent, return error `aip/protocol/agent_not_found` with HTTP 404.
+
+```json
+{
+  "ok": false,
+  "error_code": "aip/protocol/agent_not_found",
+  "error_message": "No agent 'unknown-id' on this gateway. Available: [coder, llama]"
+}
+```
+
+Callers MAY bypass routing by using the per-agent path `/v1/agents/{agent_id}/aip` directly.
+
+### 16.4 Aggregated Status (`GET /v1/status`)
+
+Returns a `GroupStatus` where:
+- `ok` is `true` only if ALL hosted agents are healthy.
+- `agents` contains the full `AgentStatus` array.
+
+```json
+{
+  "ok": true,
+  "service": "aip",
+  "namespace": "my-team",
+  "root_agent_id": "gateway-hostname",
+  "timestamp": "2026-03-12T12:00:00Z",
+  "agents": [ ... ]
+}
+```
+
+### 16.5 Platform Registration
+
+When a gateway registers with a platform, it MUST register each agent independently. The registration payload MUST include explicit `endpoints` so the platform knows the per-agent paths:
+
+```json
+{
+  "agent_id": "coder",
+  "base_url": "https://gw.example.com",
+  "namespace": "my-team",
+  "endpoints": {
+    "aip": "https://gw.example.com/v1/agents/coder/aip",
+    "status": "https://gw.example.com/v1/agents/coder/status"
+  }
+}
+```
+
+Each agent maintains its own heartbeat. The platform treats each as an independent agent — it has no concept of "gateway" vs "standalone."
+
+### 16.6 Isolation Requirements
+
+| Requirement | Description |
+|-------------|-------------|
+| **Fault isolation** | If one backend is unreachable, the gateway MUST continue serving all other agents. The failed agent's status reports `ok: false, lifecycle: "failed"`. |
+| **Independent state** | Each agent has its own task counter, error state, and lifecycle. A failure in agent A MUST NOT affect agent B. |
+| **Namespace inheritance** | Agents inherit the gateway's `namespace` unless the agent-specific config overrides it. |
+| **Graceful shutdown** | On SIGTERM, the gateway SHOULD: (1) stop accepting new connections, (2) drain in-flight requests with a reasonable timeout, (3) deregister each agent from the platform, (4) close all backend connections. |
+
+### 16.7 Hot Reload (OPTIONAL)
+
+Implementations MAY support configuration reload without restart. The recommended mechanism is `SIGHUP`:
+
+1. Re-read the config file.
+2. Connect new agents, remove deleted agents.
+3. For changed agents: gracefully drain the old backend, then switch to the new one.
+4. Log which agents were added/removed/changed.
+
+### 16.8 Gateway Configuration (Informative)
+
+A gateway is typically configured via a YAML file:
+
+```yaml
+platform: https://hive.example.com
+secret: sk-xxx
+namespace: my-team
+port: 9090
+
+agents:
+  - id: coder
+    url: http://127.0.0.1:18789/v1/chat/completions
+    format: openai
+    secret: gw-token-xxx
+    name: OpenClaw Coder
+    tags: [coding, reasoning]
+    color: "#10B981"
+
+  - id: llama
+    url: http://localhost:11434/v1/chat/completions
+    format: openai
+    name: Ollama Llama3
+    tags: [llm, general]
+    color: "#3B82F6"
+
+  - id: workflow
+    url: https://api.dify.ai/v1/chat-messages
+    format: dify
+    secret: app-xxx
+    name: Dify Workflow
+    tags: [workflow, automation]
+    color: "#8B5CF6"
+```
+
+The reference implementation launches the gateway with:
+
+```
+aip bridge --config gateway.yaml
+```
+
+### 16.9 Edge Cases and Operational Considerations
+
+| Scenario | Required Behavior |
+|----------|-------------------|
+| Duplicate agent IDs in config | MUST reject at startup with a clear error. |
+| Backend responds but with errors | Set `ok: false` and `last_error` on that agent. Keep serving requests (which will return 503 for that agent). |
+| Platform unavailable at startup | Log a warning, continue in standalone mode. Retry registration in the background. |
+| Agent added at runtime (hot reload) | Connect transport, probe health, register with platform, start heartbeat. |
+| Agent removed at runtime | Stop heartbeat, deregister from platform, drain in-flight, close transport. |
+| All agents down | `GET /v1/status` returns `ok: false`. `GET /health` returns `{"ok": false, "agents": {...}}`. The gateway itself stays up. |
+| Message to non-existent agent | Return `aip/protocol/agent_not_found` with HTTP 404 and list available agent IDs. |
+| Large number of agents (100+) | Implementations SHOULD use connection pooling and async I/O. Per-agent timeouts prevent one slow agent from blocking others. |
+
+---
+
 ## Appendix C: Relationship to Other Protocols
 
 (See also Appendix B for JSON-RPC 2.0 interoperability.)

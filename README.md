@@ -234,6 +234,112 @@ Every flag has an `AIP_BRIDGE_*` env var equivalent (e.g. `AIP_BRIDGE_AGENT`).
 
 </details>
 
+**Multi-Agent Gateway** (all agents → one port → one platform):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /v1/agents` | Discover all hosted agents |
+| `GET /v1/agents/{id}/status` | Status of a specific agent |
+| `POST /v1/agents/{id}/aip` | Send message to a specific agent |
+
+## Multi-Agent Gateway
+
+Run multiple agents behind **one port** — a single process manages transport, health, registration, and routing for all of them.
+
+### Quick Start
+
+```bash
+pip install aip-protocol[bridge] && aip bridge --config gateway.yaml
+```
+
+### Example `gateway.yaml`
+
+```yaml
+platform: https://hive.example.com
+secret: sk-xxx
+namespace: my-team
+port: 9090
+
+agents:
+  # OpenClaw coding agent
+  - id: coder
+    url: http://127.0.0.1:18789/v1/chat/completions
+    format: openai
+    secret: gw-token-xxx
+    name: OpenClaw Coder
+    tags: [coding, reasoning]
+    color: "#10B981"
+
+  # Local Ollama LLM
+  - id: llama
+    url: http://localhost:11434/v1/chat/completions
+    format: openai
+    name: Ollama Llama3
+    tags: [llm, general]
+    color: "#3B82F6"
+
+  # Dify workflow
+  - id: workflow
+    url: https://api.dify.ai/v1/chat-messages
+    format: dify
+    secret: app-xxx
+    name: Dify Workflow
+    tags: [workflow, automation]
+    color: "#8B5CF6"
+
+  # Coze bot
+  - id: bot
+    url: https://api.coze.com/open_api/v2/chat
+    format: coze
+    secret: pat-xxx
+    name: Coze Bot
+    tags: [bot, chat]
+    color: "#F59E0B"
+```
+
+### What Happens
+
+1. One FastAPI process starts on port 9090.
+2. Each agent gets an independent transport, health check, and heartbeat.
+3. The platform sees N separate agents — it doesn't know or care they're behind one gateway.
+4. If one backend goes down, the others keep running.
+
+### Endpoints
+
+```
+GET  /v1/agents              → list all agents with status
+GET  /v1/agents/coder/status → specific agent status
+POST /v1/agents/coder/aip    → message to coder
+GET  /v1/status              → GroupStatus (all agents)
+POST /v1/aip                 → route by "to" field
+GET  /health                 → {"ok": true, "agents": {"coder":"running","llama":"running",...}}
+```
+
+### Per-Agent Config
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | yes | — | Unique agent identifier |
+| `url` | yes | — | Backend URL (HTTP, WebSocket, or `stdio:cmd`) |
+| `format` | no | `generic` | API format: `generic`, `openai`, `anthropic`, `dify`, `coze`, `raw` |
+| `secret` | no | — | Auth token for the backend agent |
+| `name` | no | id | Human-readable display name |
+| `role` | no | `worker` | Agent role |
+| `namespace` | no | (gateway) | Override gateway-level namespace |
+| `tags` | no | `[]` | Capability tags |
+| `color` | no | — | Brand color hex for dashboards |
+| `icon` | no | — | Icon URL |
+| `timeout` | no | `120` | Backend call timeout (seconds) |
+| `protocol` | no | auto | Force protocol: `http`, `ws`, `stdio` |
+
+### CLI Overrides
+
+Config-file values can be overridden from the command line:
+
+```bash
+aip bridge --config gateway.yaml --port 8080 --namespace production --secret sk-prod-xxx
+```
+
 ---
 
 ## Quick Start

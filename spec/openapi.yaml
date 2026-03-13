@@ -2,7 +2,7 @@ openapi: "3.1.0"
 
 info:
   title: Agent Interaction Protocol (AIP)
-  version: "1.1.1"
+  version: "1.2.0"
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     
@@ -468,6 +468,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UsageSummary"
+
+  # ── Multi-Agent Gateway endpoints ──────────────────────────────
+
+  /v1/agents:
+    get:
+      operationId: listHostedAgents
+      summary: Discover all agents hosted on this gateway
+      description: |
+        Returns an array of AgentStatus objects — one per hosted agent.
+        Single-agent hosts MAY return a single-element array.
+      tags: [gateway]
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentStatus"
+
+  /v1/agents/{agent_id}/status:
+    get:
+      operationId: getHostedAgentStatus
+      summary: Status of a specific hosted agent
+      tags: [gateway]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentStatus"
+        "404":
+          description: Agent not found on this gateway
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPAck"
+
+  /v1/agents/{agent_id}/aip:
+    post:
+      operationId: sendToHostedAgent
+      summary: Send an AIPMessage to a specific hosted agent
+      tags: [gateway]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIPMessage"
+      responses:
+        "200":
+          description: AIP acknowledgment (JSON)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPAck"
+        "404":
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPAck"
+        "503":
+          description: Agent backend unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPAck"
 
   /v1/registry/agents:
     post:

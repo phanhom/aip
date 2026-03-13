@@ -2,6 +2,7 @@
 
 Usage:
     aip bridge --agent <url> --platform <url> --secret <key>
+    aip bridge --config gateway.yaml
 
 All flags support environment variable overrides with AIP_BRIDGE_ prefix:
     AIP_BRIDGE_AGENT, AIP_BRIDGE_PLATFORM, AIP_BRIDGE_SECRET, etc.
@@ -48,8 +49,13 @@ def main(argv: list[str] | None = None) -> None:
 
     g = br.add_argument_group("agent connection")
     g.add_argument(
+        "--config",
+        default=_env("CONFIG"),
+        metavar="FILE",
+        help="YAML/JSON config for multi-agent gateway mode (see docs)",
+    )
+    g.add_argument(
         "--agent",
-        required=not bool(_env("AGENT")),
         default=_env("AGENT"),
         metavar="URL",
         help="Agent URL. Scheme determines protocol: http(s)://, ws(s)://, stdio:cmd",
@@ -165,29 +171,57 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "bridge":
-        from aip.bridge import BridgeConfig, run_bridge
+        if args.config:
+            from aip.gateway import load_config, run_gateway
 
-        config = BridgeConfig(
-            agent_url=args.agent,
-            platform_url=args.platform,
-            secret=args.secret,
-            agent_secret=args.agent_secret,
-            agent_id=args.agent_id,
-            name=args.name,
-            namespace=args.namespace,
-            role=args.role,
-            tags=[t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
-            icon_url=args.icon,
-            color=args.color,
-            port=args.port,
-            host=args.host,
-            public_url=args.public_url,
-            protocol=args.protocol,
-            api_format=args.api_format,
-            timeout=args.timeout,
-            heartbeat_interval=args.heartbeat,
-        )
-        run_bridge(config)
+            cfg = load_config(args.config)
+            if args.platform:
+                cfg.platform_url = args.platform
+            if args.secret:
+                cfg.secret = args.secret
+            if args.namespace != "default":
+                cfg.namespace = args.namespace
+            if args.port != 9090:
+                cfg.port = args.port
+            if args.host != "0.0.0.0":
+                cfg.host = args.host
+            if args.public_url:
+                cfg.public_url = args.public_url
+            if args.heartbeat != 10:
+                cfg.heartbeat_interval = args.heartbeat
+            run_gateway(cfg)
+        elif args.agent:
+            from aip.bridge import BridgeConfig, run_bridge
+
+            config = BridgeConfig(
+                agent_url=args.agent,
+                platform_url=args.platform,
+                secret=args.secret,
+                agent_secret=args.agent_secret,
+                agent_id=args.agent_id,
+                name=args.name,
+                namespace=args.namespace,
+                role=args.role,
+                tags=(
+                    [t.strip() for t in args.tags.split(",") if t.strip()]
+                    if args.tags
+                    else []
+                ),
+                icon_url=args.icon,
+                color=args.color,
+                port=args.port,
+                host=args.host,
+                public_url=args.public_url,
+                protocol=args.protocol,
+                api_format=args.api_format,
+                timeout=args.timeout,
+                heartbeat_interval=args.heartbeat,
+            )
+            run_bridge(config)
+        else:
+            print("Error: --agent or --config is required.", file=sys.stderr)
+            br.print_help()
+            sys.exit(1)
     else:
         parser.print_help()
         sys.exit(1)

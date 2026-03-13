@@ -15,9 +15,10 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 from aip.bridge import BridgeConfig
+from aip.gateway import AgentEntry, GatewayConfig
 from aip.jsonrpc_bridge import (
     aip_ack_to_jsonrpc,
     aip_to_jsonrpc,
@@ -128,6 +129,8 @@ __all__ = [
     "jsonrpc_to_aip",
     "aip_ack_to_jsonrpc",
     "jsonrpc_error_to_aip",
-    # Bridge
+    # Bridge & Gateway
     "BridgeConfig",
+    "AgentEntry",
+    "GatewayConfig",
 ]
