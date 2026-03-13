@@ -38,6 +38,7 @@ import json
 import logging
 import platform as platform_mod
 import socket
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,11 +47,15 @@ from pathlib import Path
 from aip.bridge import (
     Formatter,
     Transport,
+    _register_once,
     build_formatter,
     build_transport,
 )
 
 log = logging.getLogger("aip.gateway")
+
+CIRCUIT_FAILURE_THRESHOLD = 3
+CIRCUIT_COOLDOWN_SECS = 30.0
 
 __all__ = ["AgentEntry", "GatewayConfig", "load_config", "run_gateway"]
 
@@ -142,7 +147,28 @@ def load_config(path: str) -> GatewayConfig:
 
 
 class _AgentBackend:
-    __slots__ = ("entry", "transport", "formatter", "task_count", "ok", "last_error")
+    """Runtime state per agent with circuit breaker.
+
+    State machine:
+        CLOSED  (ok=True)  — normal operation
+        OPEN    (ok=False)  — consecutive failures >= threshold, reject fast
+        HALF_OPEN           — cooldown expired, allow one probe request
+
+    On success: reset to CLOSED.
+    On failure: increment counter. If >= threshold, move to OPEN.
+    After CIRCUIT_COOLDOWN_SECS in OPEN: move to HALF_OPEN (allow one try).
+    """
+
+    __slots__ = (
+        "entry",
+        "transport",
+        "formatter",
+        "task_count",
+        "ok",
+        "last_error",
+        "_consecutive_failures",
+        "_circuit_open_since",
+    )
 
     def __init__(self, entry: AgentEntry, transport: Transport, formatter: Formatter):
         self.entry = entry
@@ -151,6 +177,37 @@ class _AgentBackend:
         self.task_count: int = 0
         self.ok: bool = True
         self.last_error: str | None = None
+        self._consecutive_failures: int = 0
+        self._circuit_open_since: float = 0.0
+
+    def record_success(self):
+        if self._consecutive_failures > 0:
+            log.info(
+                "Agent '%s' recovered after %d failures",
+                self.entry.id,
+                self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._circuit_open_since = 0.0
+        self.ok = True
+        self.last_error = None
+
+    def record_failure(self, error: str):
+        self._consecutive_failures += 1
+        self.last_error = error
+        if self._consecutive_failures >= CIRCUIT_FAILURE_THRESHOLD:
+            self.ok = False
+            self._circuit_open_since = time.monotonic()
+
+    @property
+    def should_attempt(self) -> bool:
+        """True if we should try sending (CLOSED or HALF_OPEN)."""
+        if self.ok:
+            return True
+        elapsed = time.monotonic() - self._circuit_open_since
+        if elapsed >= CIRCUIT_COOLDOWN_SECS:
+            return True
+        return False
 
 
 # ── Gateway runner ────────────────────────────────────────────────────
@@ -190,7 +247,7 @@ def run_gateway(cfg: GatewayConfig) -> None:
         formatter = build_formatter(entry.format)
         backends[entry.id] = _AgentBackend(entry, transport, formatter)
 
-    hb_tasks: list[asyncio.Task] = []
+    bg_tasks: list[asyncio.Task] = []
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -199,33 +256,29 @@ def run_gateway(cfg: GatewayConfig) -> None:
                 await be.transport.connect()
                 log.info("Agent '%s' connected → %s", aid, be.entry.url)
             except Exception as e:
-                be.ok = False
-                be.last_error = str(e)
+                be.record_failure(str(e))
                 log.error("Agent '%s' connect failed: %s", aid, e)
 
         _print_banner(cfg, base_url, backends)
 
         if cfg.platform_url:
             for aid, be in backends.items():
-                if not be.ok:
-                    continue
-                hb_url = await _register_agent(cfg, aid, be.entry, base_url)
-                if hb_url:
-                    hb_tasks.append(
-                        asyncio.create_task(
-                            _heartbeat_loop(
-                                hb_url,
-                                cfg.secret,
-                                cfg.heartbeat_interval,
-                                lambda _be=be: _be.task_count,
-                            )
+                bg_tasks.append(
+                    asyncio.create_task(
+                        _register_agent_with_retry(
+                            cfg, aid, be, base_url, bg_tasks
                         )
                     )
+                )
+
+        bg_tasks.append(asyncio.create_task(_health_probe_loop(backends)))
 
         yield
 
-        for t in hb_tasks:
+        for t in bg_tasks:
             t.cancel()
+        if cfg.platform_url:
+            await _deregister_all(cfg, backends)
         for be in backends.values():
             await be.transport.close()
 
@@ -333,11 +386,14 @@ def run_gateway(cfg: GatewayConfig) -> None:
 
     async def _handle_aip(agent_id: str, request: Request, body: dict):
         be = backends[agent_id]
-        if not be.ok:
+        if not be.should_attempt:
             return JSONResponse(status_code=503, content={
                 "ok": False,
                 "error_code": "aip/protocol/agent_unavailable",
-                "error_message": f"Agent '{agent_id}' is down: {be.last_error}",
+                "error_message": (
+                    f"Agent '{agent_id}' circuit open "
+                    f"({be._consecutive_failures} failures): {be.last_error}"
+                ),
             })
 
         intent = body.get("intent", "")
@@ -352,8 +408,11 @@ def run_gateway(cfg: GatewayConfig) -> None:
 
         be.task_count += 1
         try:
-            result = await be.transport.send(be.formatter.encode(intent, payload))
+            result = await be.transport.send(
+                be.formatter.encode(intent, payload)
+            )
             text = be.formatter.decode_response(result)
+            be.record_success()
             return {
                 "ok": True,
                 "message_id": body.get("message_id", ""),
@@ -362,8 +421,7 @@ def run_gateway(cfg: GatewayConfig) -> None:
                 "intent": text,
             }
         except Exception as e:
-            be.ok = False
-            be.last_error = str(e)
+            be.record_failure(str(e))
             return JSONResponse(status_code=502, content={
                 "ok": False,
                 "message_id": body.get("message_id", ""),
@@ -390,63 +448,91 @@ async def _sse(be: _AgentBackend, intent, payload, raw_msg, agent_id):
     try:
         result = await be.transport.send(be.formatter.encode(intent, payload))
         text = be.formatter.decode_response(result)
+        be.record_success()
         yield f"event: message\ndata: {json.dumps({'intent': text})}\n\n"
-        done_payload = {
+        done = {
             "ok": True,
             "message_id": raw_msg.get("message_id", ""),
             "to": agent_id,
             "status": "received",
             "task_id": task_id,
         }
-        yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
+        yield f"event: done\ndata: {json.dumps(done)}\n\n"
     except Exception as e:
-        be.ok = False
-        be.last_error = str(e)
-        err = {"error_code": "aip/execution/task_failed", "error_message": str(e)}
+        be.record_failure(str(e))
+        err = {
+            "error_code": "aip/execution/task_failed",
+            "error_message": str(e),
+        }
         yield f"event: error\ndata: {json.dumps(err)}\n\n"
 
 
-# ── Platform registration ────────────────────────────────────────────
+# ── Platform registration with retry ─────────────────────────────────
 
 
-async def _register_agent(
-    cfg: GatewayConfig, agent_id: str, entry: AgentEntry, gateway_url: str
-) -> str | None:
-    import httpx
-
-    ns = entry.namespace or cfg.namespace
-    headers = {"Authorization": f"Bearer {cfg.secret}"} if cfg.secret else {}
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{cfg.platform_url}/v1/registry/agents",
-                json={
-                    "agent_id": agent_id,
-                    "base_url": gateway_url,
-                    "namespace": ns,
-                    "endpoints": {
-                        "aip": f"{gateway_url}/v1/agents/{agent_id}/aip",
-                        "status": f"{gateway_url}/v1/agents/{agent_id}/status",
-                    },
-                },
-                headers=headers,
+async def _register_agent_with_retry(
+    cfg: GatewayConfig,
+    agent_id: str,
+    be: _AgentBackend,
+    gateway_url: str,
+    bg_tasks: list,
+):
+    """Register one agent with exponential backoff, then start heartbeat."""
+    ns = be.entry.namespace or cfg.namespace
+    endpoints = {
+        "aip": f"{gateway_url}/v1/agents/{agent_id}/aip",
+        "status": f"{gateway_url}/v1/agents/{agent_id}/status",
+    }
+    delay = 1.0
+    max_delay = 60.0
+    while True:
+        try:
+            hb_url = await _register_once(
+                cfg.platform_url,
+                agent_id,
+                gateway_url,
+                ns,
+                cfg.secret,
+                endpoints=endpoints,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            log.info("Registered agent '%s' with platform", agent_id)
-            return data.get("heartbeat_url")
-    except Exception as e:
-        log.error("Registration failed for '%s': %s", agent_id, e)
-        return None
+            if hb_url:
+                bg_tasks.append(
+                    asyncio.create_task(
+                        _heartbeat_loop(
+                            hb_url,
+                            cfg.secret,
+                            cfg.heartbeat_interval,
+                            lambda _be=be: _be.task_count,
+                        )
+                    )
+                )
+            return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning(
+                "Registration of '%s' failed: %s — retrying in %.0fs",
+                agent_id,
+                e,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
 
 
-async def _heartbeat_loop(url: str, secret: str | None, interval: int, get_tasks):
+async def _heartbeat_loop(url, secret, interval, get_tasks):
+    """Heartbeat with exponential backoff on consecutive failures."""
     import httpx
 
     headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    consecutive_failures = 0
     async with httpx.AsyncClient(timeout=10, headers=headers) as client:
         while True:
-            await asyncio.sleep(interval)
+            if consecutive_failures > 0:
+                backoff = min(interval * (2**consecutive_failures), 120)
+                await asyncio.sleep(backoff)
+            else:
+                await asyncio.sleep(interval)
             try:
                 await client.post(
                     url,
@@ -457,8 +543,66 @@ async def _heartbeat_loop(url: str, secret: str | None, interval: int, get_tasks
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 )
+                if consecutive_failures > 0:
+                    log.info(
+                        "Heartbeat recovered after %d failures",
+                        consecutive_failures,
+                    )
+                consecutive_failures = 0
+            except asyncio.CancelledError:
+                return
             except Exception as e:
-                log.warning("Heartbeat failed: %s", e)
+                consecutive_failures += 1
+                log.warning(
+                    "Heartbeat failed (%d consecutive): %s",
+                    consecutive_failures,
+                    e,
+                )
+
+
+async def _deregister_all(cfg: GatewayConfig, backends: dict):
+    """Best-effort deregistration of all agents on shutdown."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {cfg.secret}"} if cfg.secret else {}
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            for aid in backends:
+                try:
+                    await client.delete(
+                        f"{cfg.platform_url}/v1/registry/agents/{aid}",
+                        headers=headers,
+                    )
+                    log.info("Deregistered '%s' from platform", aid)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+async def _health_probe_loop(backends: dict[str, _AgentBackend]):
+    """Periodically probe failed agents to see if they've recovered."""
+    while True:
+        await asyncio.sleep(CIRCUIT_COOLDOWN_SECS)
+        for aid, be in backends.items():
+            if be.ok:
+                continue
+            elapsed = time.monotonic() - be._circuit_open_since
+            if elapsed < CIRCUIT_COOLDOWN_SECS:
+                continue
+            try:
+                await be.transport.connect()
+                be.record_success()
+                log.info(
+                    "Health probe: agent '%s' is back online", aid
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                be.record_failure(str(e))
+                log.debug(
+                    "Health probe: agent '%s' still down: %s", aid, e
+                )
 
 
 # ── Banner ────────────────────────────────────────────────────────────

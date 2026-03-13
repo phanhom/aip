@@ -27,6 +27,49 @@ from urllib.parse import urlparse
 
 log = logging.getLogger("aip.bridge")
 
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BACKOFF_BASE = 1.0
+DEFAULT_BACKOFF_MAX = 30.0
+
+
+# ── Retry helper ──────────────────────────────────────────────────────
+
+
+async def _retry(
+    coro_factory,
+    *,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    backoff_base: float = DEFAULT_BACKOFF_BASE,
+    backoff_max: float = DEFAULT_BACKOFF_MAX,
+    label: str = "operation",
+):
+    """Call coro_factory() up to max_retries+1 times with exponential backoff."""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_factory()
+        except Exception as e:
+            last_exc = e
+            if attempt < max_retries:
+                delay = min(backoff_base * (2**attempt), backoff_max)
+                log.warning(
+                    "%s failed (attempt %d/%d): %s — retrying in %.1fs",
+                    label,
+                    attempt + 1,
+                    max_retries + 1,
+                    e,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                log.error(
+                    "%s failed after %d attempts: %s",
+                    label,
+                    max_retries + 1,
+                    e,
+                )
+    raise last_exc  # type: ignore[misc]
+
 
 # ── Transports ────────────────────────────────────────────────────────
 
@@ -48,21 +91,37 @@ class Transport(ABC):
 
 
 class HTTPTransport(Transport):
-    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout: float = 120):
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: float = 120,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+    ):
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
+        self.max_retries = max_retries
         self._client = None
 
     async def connect(self):
         import httpx
 
-        self._client = httpx.AsyncClient(timeout=self.timeout, headers=self.headers)
+        self._client = httpx.AsyncClient(
+            timeout=self.timeout, headers=self.headers
+        )
 
-    async def send(self, body: dict) -> dict:
+    async def _do_send(self, body: dict) -> dict:
         resp = await self._client.post(self.url, json=body)
         resp.raise_for_status()
         return resp.json()
+
+    async def send(self, body: dict) -> dict:
+        return await _retry(
+            lambda: self._do_send(body),
+            max_retries=self.max_retries,
+            label=f"HTTP POST {self.url}",
+        )
 
     async def send_stream(self, body: dict) -> AsyncIterator[dict]:
         async with self._client.stream("POST", self.url, json=body) as resp:
@@ -90,10 +149,17 @@ class HTTPTransport(Transport):
 
 
 class WebSocketTransport(Transport):
-    def __init__(self, url: str, headers: dict[str, str] | None = None):
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+    ):
         self.url = url
         self.headers = headers or {}
+        self.max_retries = max_retries
         self._ws = None
+        self._connected = False
 
     async def connect(self):
         try:
@@ -103,20 +169,51 @@ class WebSocketTransport(Transport):
                 "WebSocket support requires 'websockets'. "
                 "Install with: pip install aip-protocol[bridge,ws]"
             )
+        await self._do_connect()
+
+    async def _do_connect(self):
         import websockets
 
-        self._ws = await websockets.connect(self.url, additional_headers=self.headers)
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+        self._ws = await websockets.connect(
+            self.url, additional_headers=self.headers
+        )
+        self._connected = True
+        log.info("WebSocket connected: %s", self.url)
+
+    async def _ensure_connected(self):
+        if self._connected and self._ws and self._ws.open:
+            return
+        log.warning("WebSocket disconnected, reconnecting: %s", self.url)
+        await _retry(
+            self._do_connect,
+            max_retries=self.max_retries,
+            label=f"WS reconnect {self.url}",
+        )
 
     async def send(self, body: dict) -> dict:
-        await self._ws.send(json.dumps(body))
-        raw = await self._ws.recv()
-        text = raw if isinstance(raw, str) else raw.decode()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return {"response": text}
+        async def _do():
+            await self._ensure_connected()
+            await self._ws.send(json.dumps(body))
+            raw = await self._ws.recv()
+            text = raw if isinstance(raw, str) else raw.decode()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"response": text}
+
+        return await _retry(
+            _do,
+            max_retries=self.max_retries,
+            label=f"WS send {self.url}",
+        )
 
     async def send_stream(self, body: dict) -> AsyncIterator[dict]:
+        await self._ensure_connected()
         await self._ws.send(json.dumps(body))
         async for raw in self._ws:
             text = raw if isinstance(raw, str) else raw.decode()
@@ -129,19 +226,33 @@ class WebSocketTransport(Transport):
                 return
 
     async def close(self):
+        self._connected = False
         if self._ws:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
 
 
 class StdioTransport(Transport):
-    """Adapter for agents that run as a subprocess communicating via JSONL on stdin/stdout."""
+    """Subprocess communicating via JSONL on stdin/stdout. Auto-restarts on crash."""
 
-    def __init__(self, command: str, env_extra: dict[str, str] | None = None):
+    def __init__(
+        self,
+        command: str,
+        env_extra: dict[str, str] | None = None,
+        max_restarts: int = 5,
+    ):
         self.command = command
         self.env_extra = env_extra or {}
+        self.max_restarts = max_restarts
         self._proc: asyncio.subprocess.Process | None = None
+        self._restart_count = 0
 
     async def connect(self):
+        await self._start_process()
+
+    async def _start_process(self):
         env = os.environ.copy()
         env.update(self.env_extra)
         self._proc = await asyncio.create_subprocess_shell(
@@ -151,9 +262,33 @@ class StdioTransport(Transport):
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        log.info("Subprocess started: pid=%d cmd=%s", self._proc.pid, self.command)
+        log.info(
+            "Subprocess started: pid=%d cmd=%s (restarts=%d)",
+            self._proc.pid,
+            self.command,
+            self._restart_count,
+        )
+
+    async def _ensure_alive(self):
+        if self._proc and self._proc.returncode is None:
+            return
+        if self._restart_count >= self.max_restarts:
+            raise RuntimeError(
+                f"Subprocess crashed {self._restart_count} times, "
+                f"giving up: {self.command}"
+            )
+        self._restart_count += 1
+        log.warning(
+            "Subprocess died (exit=%s), restarting (%d/%d): %s",
+            self._proc.returncode if self._proc else "?",
+            self._restart_count,
+            self.max_restarts,
+            self.command,
+        )
+        await self._start_process()
 
     async def send(self, body: dict) -> dict:
+        await self._ensure_alive()
         self._proc.stdin.write((json.dumps(body) + "\n").encode())
         await self._proc.stdin.drain()
         line = await self._proc.stdout.readline()
@@ -162,6 +297,7 @@ class StdioTransport(Transport):
         return json.loads(line.decode())
 
     async def send_stream(self, body: dict) -> AsyncIterator[dict]:
+        await self._ensure_alive()
         body["stream"] = True
         self._proc.stdin.write((json.dumps(body) + "\n").encode())
         await self._proc.stdin.drain()
@@ -451,23 +587,23 @@ def run_bridge(cfg: BridgeConfig) -> None:
     formatter = build_formatter(cfg.api_format)
     proto_name = cfg.protocol or detect_protocol(cfg.agent_url)[0]
     task_count = 0
-    hb_task: asyncio.Task | None = None
+    bg_tasks: list[asyncio.Task] = []
 
     @asynccontextmanager
     async def lifespan(_app):
-        nonlocal hb_task
         await transport.connect()
         _print_banner(cfg, agent_id, display_name, base_url, proto_name)
-        hb_url = None
         if cfg.platform_url:
-            hb_url = await _register(cfg, agent_id, base_url)
-        if hb_url:
-            hb_task = asyncio.create_task(
-                _heartbeat_loop(hb_url, cfg.secret, cfg.heartbeat_interval, lambda: task_count)
+            bg_tasks.append(
+                asyncio.create_task(
+                    _register_with_retry(cfg, agent_id, base_url, bg_tasks)
+                )
             )
         yield
-        if hb_task:
-            hb_task.cancel()
+        for t in bg_tasks:
+            t.cancel()
+        if cfg.platform_url:
+            await _deregister(cfg, agent_id)
         await transport.close()
 
     app = FastAPI(title=f"AIP Bridge — {agent_id}", lifespan=lifespan)
@@ -478,7 +614,10 @@ def run_bridge(cfg: BridgeConfig) -> None:
 
     @app.get("/v1/status")
     async def get_status():
-        presentation: dict = {"display_name": display_name, "categories": cfg.tags or []}
+        presentation: dict = {
+            "display_name": display_name,
+            "categories": cfg.tags or [],
+        }
         if cfg.icon_url:
             presentation["icon_url"] = cfg.icon_url
         if cfg.color:
@@ -572,39 +711,110 @@ async def _sse(transport, formatter, intent, payload, raw_msg, agent_id):
         yield f"event: error\ndata: {json.dumps(err)}\n\n"
 
 
-async def _register(cfg: BridgeConfig, agent_id: str, base_url: str) -> str | None:
+async def _register_once(
+    platform_url: str,
+    agent_id: str,
+    base_url: str,
+    namespace: str,
+    secret: str | None,
+    endpoints: dict[str, str] | None = None,
+) -> str | None:
+    """Single registration attempt. Returns heartbeat_url or None."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    body: dict = {
+        "agent_id": agent_id,
+        "base_url": base_url,
+        "namespace": namespace,
+    }
+    if endpoints:
+        body["endpoints"] = endpoints
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{platform_url}/v1/registry/agents",
+            json=body,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        log.info("Registered with platform: agent_id=%s", agent_id)
+        return data.get("heartbeat_url")
+
+
+async def _register_with_retry(
+    cfg: BridgeConfig,
+    agent_id: str,
+    base_url: str,
+    bg_tasks: list,
+):
+    """Register with exponential backoff, then start heartbeat."""
+    delay = 1.0
+    max_delay = 60.0
+    while True:
+        try:
+            hb_url = await _register_once(
+                cfg.platform_url,
+                agent_id,
+                base_url,
+                cfg.namespace,
+                cfg.secret,
+            )
+            if hb_url:
+                bg_tasks.append(
+                    asyncio.create_task(
+                        _heartbeat_loop(
+                            hb_url,
+                            cfg.secret,
+                            cfg.heartbeat_interval,
+                            lambda: 0,
+                        )
+                    )
+                )
+            return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning(
+                "Registration failed: %s — retrying in %.0fs", e, delay
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
+
+
+async def _deregister(cfg: BridgeConfig, agent_id: str):
+    """Best-effort deregistration on shutdown."""
+    if not cfg.platform_url:
+        return
     import httpx
 
     headers = {"Authorization": f"Bearer {cfg.secret}"} if cfg.secret else {}
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{cfg.platform_url}/v1/registry/agents",
-                json={
-                    "agent_id": agent_id,
-                    "base_url": base_url,
-                    "namespace": cfg.namespace,
-                },
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.delete(
+                f"{cfg.platform_url}/v1/registry/agents/{agent_id}",
                 headers=headers,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            log.info("Registered with platform: agent_id=%s", data.get("agent_id", agent_id))
-            return data.get("heartbeat_url")
+            log.info("Deregistered from platform: %s", agent_id)
     except Exception as e:
-        log.error("Platform registration failed: %s — bridge runs standalone", e)
-        return None
+        log.debug("Deregistration failed (best-effort): %s", e)
 
 
 async def _heartbeat_loop(
-    url: str, secret: str | None, interval: int, get_tasks: callable
+    url: str, secret: str | None, interval: int, get_tasks
 ):
+    """Heartbeat with exponential backoff on consecutive failures."""
     import httpx
 
     headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    consecutive_failures = 0
     async with httpx.AsyncClient(timeout=10, headers=headers) as client:
         while True:
-            await asyncio.sleep(interval)
+            if consecutive_failures > 0:
+                backoff = min(interval * (2**consecutive_failures), 120)
+                await asyncio.sleep(backoff)
+            else:
+                await asyncio.sleep(interval)
             try:
                 await client.post(
                     url,
@@ -615,8 +825,21 @@ async def _heartbeat_loop(
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 )
+                if consecutive_failures > 0:
+                    log.info(
+                        "Heartbeat recovered after %d failures",
+                        consecutive_failures,
+                    )
+                consecutive_failures = 0
+            except asyncio.CancelledError:
+                return
             except Exception as e:
-                log.warning("Heartbeat failed: %s", e)
+                consecutive_failures += 1
+                log.warning(
+                    "Heartbeat failed (%d consecutive): %s",
+                    consecutive_failures,
+                    e,
+                )
 
 
 def _print_banner(cfg, agent_id, display_name, base_url, proto):
