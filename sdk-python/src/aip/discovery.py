@@ -155,11 +155,21 @@ def _build_headers(credentials: dict | None) -> dict[str, str]:
     scheme = credentials.get("scheme", "bearer")
     token = credentials.get("token", "")
     header = credentials.get("header", "Authorization")
-    if scheme == "bearer":
-        return {header: f"Bearer {token}"}
-    if scheme == "api_key":
-        return {header: token}
-    return {header: token}
+    headers: dict[str, str] = {}
+
+    if scheme == "none" or not token:
+        pass
+    elif scheme == "bearer":
+        headers[header] = f"Bearer {token}"
+    elif scheme == "basic":
+        headers[header] = f"Basic {token}"
+    else:
+        headers[header] = token
+
+    for k, v in (credentials.get("extra_headers") or {}).items():
+        headers[k] = v
+
+    return headers
 
 
 def _derive_id(url: str) -> str:

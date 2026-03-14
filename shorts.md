@@ -95,11 +95,18 @@ For agents that DON'T speak AIP natively, the platform discovers them **by URL a
 # Add an OpenClaw instance — ONE API call, nothing installed on agent machine
 curl -X POST https://platform.example.com/v1/registry/agents \
   -H "Content-Type: application/json" \
-  -d '{ "base_url": "http://192.168.1.10:3000" }'
+  -d '{
+    "base_url": "http://192.168.1.10:18789",
+    "credentials": {
+      "scheme": "bearer",
+      "token": "YOUR_OPENCLAW_GATEWAY_TOKEN",
+      "extra_headers": { "x-openclaw-agent-id": "main" }
+    }
+  }'
 ```
 
 The platform:
-1. Probes `GET /v1/status` → 404 (not AIP native)
+1. Probes `GET /v1/status` with Bearer token → 404 (not AIP native)
 2. Probes `GET /.well-known/agent.json` → 404 (not A2A)
 3. Probes `GET /v1/models` → 200 → **OpenAI-compatible!**
 4. Builds AgentStatus, starts health-checking, ready for messages

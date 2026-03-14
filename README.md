@@ -83,13 +83,20 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 The platform can add **any agent by URL** — no bridge process, no sidecar, no extra install on the agent machine. The platform auto-detects the protocol, builds a capability profile, and handles all translation server-side.
 
 ```bash
-# Add an OpenClaw instance — just its URL, nothing else
+# Add an OpenClaw instance — URL + its gateway token
 curl -X POST https://platform.example.com/v1/registry/agents \
   -H "Content-Type: application/json" \
-  -d '{ "base_url": "http://192.168.1.10:3000" }'
+  -d '{
+    "base_url": "http://192.168.1.10:18789",
+    "credentials": {
+      "scheme": "bearer",
+      "token": "YOUR_OPENCLAW_GATEWAY_TOKEN",
+      "extra_headers": { "x-openclaw-agent-id": "main" }
+    }
+  }'
 ```
 
-The platform probes the URL, discovers it's OpenAI-compatible, and registers it. Done — visible in the dashboard, ready to receive tasks.
+The platform authenticates with the token, probes the URL, discovers it's OpenAI-compatible, and registers it. Done — visible in the dashboard, ready to receive tasks. Agents that don't require auth (e.g. Ollama on a private LAN) work with just `{ "base_url": "..." }`.
 
 ### Supported Protocol Profiles
 
@@ -107,7 +114,14 @@ Or skip auto-detection with a hint: `{ "base_url": "...", "protocol": "openai" }
 ```python
 from aip import discover
 
-result = await discover("http://192.168.1.10:3000")
+result = await discover(
+    "http://192.168.1.10:18789",
+    credentials={
+        "scheme": "bearer",
+        "token": "YOUR_OPENCLAW_GATEWAY_TOKEN",
+        "extra_headers": {"x-openclaw-agent-id": "main"},
+    },
+)
 print(result.protocol)       # "openai"
 print(result.models)         # ["openclaw-v1"]
 status = result.to_agent_status(namespace="my-team")

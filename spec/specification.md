@@ -2430,7 +2430,50 @@ The registration response includes the detected protocol:
 }
 ```
 
-### 17.5 Server-Side Translation
+### 17.5 Credential Handling
+
+Many non-AIP agents require authentication (Bearer tokens, API keys, custom headers). The platform MUST support credentials for communicating with registered agents.
+
+#### 17.5.1 Credential Object (`AgentCredentials`)
+
+```json
+{
+  "scheme": "bearer",
+  "token": "oc_gw_abc123...",
+  "header": "Authorization",
+  "extra_headers": {
+    "x-openclaw-agent-id": "main"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scheme` | string | `"bearer"` | `"bearer"`, `"api_key"`, `"header"`, `"basic"`, `"none"`. |
+| `token` | string \| null | null | The secret value. For `bearer`: the token. For `api_key`/`header`: the header value. For `basic`: base64-encoded `user:password`. |
+| `header` | string | `"Authorization"` | Header name. For `bearer`, this produces `Authorization: Bearer {token}`. For `api_key`, produces `{header}: {token}`. |
+| `extra_headers` | object \| null | null | Additional headers for every request. For OpenClaw: `{"x-openclaw-agent-id": "main"}`. |
+
+#### 17.5.2 Credential Lifecycle
+
+1. **Registration**: Credentials are provided in the `POST /v1/registry/agents` request body.
+2. **Storage**: The platform MUST store credentials securely (encrypted at rest). Credentials MUST NEVER appear in list/status responses.
+3. **Probing**: The platform MUST include credentials in all discovery probes and health checks.
+4. **Messaging**: The platform MUST include credentials when forwarding messages to the agent.
+5. **Rotation**: Credentials can be updated via `PUT /v1/registry/agents/{id}` without re-registration.
+
+#### 17.5.3 Common Credential Patterns
+
+| Agent | Scheme | Configuration |
+|-------|--------|---------------|
+| OpenClaw | `bearer` | `token` = gateway token, `extra_headers` = `{"x-openclaw-agent-id": "main"}` |
+| Ollama | `none` | No auth (local only) |
+| vLLM | `bearer` | `token` = API key |
+| LiteLLM | `bearer` | `token` = API key |
+| Anthropic API | `header` | `header` = `"x-api-key"`, `token` = API key |
+| Custom | `api_key` | `header` = custom header name, `token` = secret |
+
+### 17.6 Server-Side Translation
 
 When the platform receives an AIP message destined for a non-AIP agent (via `POST /v1/aip` with routing, or via the platform's message router), the platform MUST translate the message according to the agent's protocol profile.
 
@@ -2443,7 +2486,7 @@ When the platform receives an AIP message destined for a non-AIP agent (via `POS
 
 Platforms MUST preserve `message_id`, `correlation_id`, and `trace_id` across translation boundaries. These fields SHOULD be stored in the platform's trace system even though the native agent does not use them.
 
-### 17.6 Health Monitoring for Non-AIP Agents
+### 17.7 Health Monitoring for Non-AIP Agents
 
 For agents registered with a non-AIP protocol, the platform MUST periodically health-check using the profile's health probe (17.2) instead of expecting heartbeats.
 
@@ -2456,7 +2499,7 @@ For agents registered with a non-AIP protocol, the platform MUST periodically he
 
 The same lifecycle rules from Section 15.6.4 apply. The platform MUST emit the same events (`agent.degraded`, `agent.failed`, `agent.recovered`).
 
-### 17.7 Example: Adding an OpenClaw Agent Without a Bridge
+### 17.8 Example: Adding an OpenClaw Agent Without a Bridge
 
 **Machine A** runs OpenClaw on port 3000. No AIP bridge, no sidecar, no extra process.
 
@@ -2471,9 +2514,10 @@ curl -X POST https://platform.example.com/v1/registry/agents \
     "namespace": "dev-team",
     "tags": ["coding", "agent"],
     "credentials": {
-      "platform_to_agent": {
-        "scheme": "bearer",
-        "token": "openclaw-gateway-token"
+      "scheme": "bearer",
+      "token": "oc_gw_abc123...",
+      "extra_headers": {
+        "x-openclaw-agent-id": "main"
       }
     }
   }'
@@ -2481,9 +2525,9 @@ curl -X POST https://platform.example.com/v1/registry/agents \
 
 **What the platform does:**
 
-1. Probes `GET http://192.168.1.10:3000/v1/status` → 404 (not AIP).
+1. Probes `GET http://192.168.1.10:3000/v1/status` with `Authorization: Bearer oc_gw_abc123...` → 404 (not AIP).
 2. Probes `GET http://192.168.1.10:3000/.well-known/agent.json` → 404 (not A2A).
-3. Probes `GET http://192.168.1.10:3000/v1/models` → 200 `{ "data": [{ "id": "openclaw-v1" }] }` → **OpenAI-compatible**.
+3. Probes `GET http://192.168.1.10:3000/v1/models` with `Authorization: Bearer oc_gw_abc123...` → 200 `{ "data": [{ "id": "openclaw-v1" }] }` → **OpenAI-compatible**.
 4. Builds synthetic `AgentStatus`:
    ```json
    {
@@ -2510,7 +2554,7 @@ curl -X POST https://platform.example.com/v1/registry/agents \
 
 **Result:** The agent appears in the platform dashboard immediately. Other agents can send it tasks. The platform translates AIP → OpenAI chat/completions transparently.
 
-### 17.8 Protocol Profile Extensibility
+### 17.9 Protocol Profile Extensibility
 
 Platforms MAY define custom protocol profiles beyond those listed in 17.2. Custom profiles MUST use a namespaced identifier (e.g., `x-myplatform/custom-agent`).
 

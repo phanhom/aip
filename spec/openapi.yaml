@@ -771,9 +771,8 @@ components:
         namespace:
           type: ["string", "null"]
           description: Requested namespace.
-        api_key:
-          type: ["string", "null"]
-          description: API key for the platform to authenticate when calling the agent.
+        credentials:
+          $ref: "#/components/schemas/AgentCredentials"
         tags:
           type: array
           items:
@@ -900,6 +899,50 @@ components:
                 description: Command-specific payload. For type=assign, this is an AgentAssignment object.
           default: []
           description: Platform-to-agent commands (see spec Section 15.6.3).
+
+    AgentCredentials:
+      type: object
+      description: |
+        Credentials the platform uses when communicating with the agent.
+        Stored securely by the platform. Never included in status or list responses.
+      properties:
+        scheme:
+          type: string
+          enum: [bearer, api_key, header, basic, none]
+          default: bearer
+          description: |
+            Authentication scheme:
+            - bearer: Authorization: Bearer {token} (OpenClaw, Ollama, vLLM, etc.)
+            - api_key: Token sent via a named header (e.g., x-api-key: {token})
+            - header: Arbitrary custom header
+            - basic: HTTP Basic authentication (user:password base64)
+            - none: No authentication required
+        token:
+          type: ["string", "null"]
+          description: |
+            The secret token or password. For "bearer", this is the Bearer token.
+            For "api_key" and "header", this is the header value.
+            For "basic", this is the base64-encoded "user:password" string.
+        header:
+          type: string
+          default: Authorization
+          description: |
+            Header name for "api_key" and "header" schemes.
+            For "bearer", this defaults to "Authorization" (standard).
+            Override for non-standard headers like "x-api-key".
+        extra_headers:
+          type: ["object", "null"]
+          additionalProperties:
+            type: string
+          description: |
+            Additional headers to include in every request to this agent.
+            Useful for agent-specific routing headers
+            (e.g., {"x-openclaw-agent-id": "main"}).
+      example:
+        scheme: bearer
+        token: "oc_gw_abc123..."
+        extra_headers:
+          x-openclaw-agent-id: main
 
     AgentAssignment:
       type: object
