@@ -727,6 +727,7 @@ async def _register_once(
         "agent_id": agent_id,
         "base_url": base_url,
         "namespace": namespace,
+        "protocol": "aip",
     }
     if endpoints:
         body["endpoints"] = endpoints

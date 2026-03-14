@@ -306,9 +306,13 @@ export type TraceType =
   | "aip.message.sent"
   | "aip.message.received"
   | "task.created"
+  | "task.working"
   | "task.completed"
   | "task.failed"
   | "task.canceled"
+  | "task.input_required"
+  | "llm.request"
+  | "llm.response"
   | "llm.usage"
   | "tool.call"
   | "tool.result"
@@ -316,9 +320,7 @@ export type TraceType =
   | "log"
   | "report"
   | "conversation"
-  | "approval.requested"
-  | "approval.granted"
-  | "approval.denied"
+  | "approval"
   | "agent.spawned"
   | "agent.terminated";
 
@@ -328,57 +330,73 @@ export type TraceSeverity = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "FAT
 /** Single observable event in the AIP system. */
 export interface TraceEvent {
   event_id: string;
-  trace_id?: string;
-  span_id?: string;
-  parent_span_id?: string;
+  trace_id: string;
+  span_id?: string | null;
+  parent_span_id?: string | null;
+  parent_event_id?: string | null;
   agent_id: string;
   trace_type: TraceType;
   severity?: TraceSeverity;
-  ts: string;
+  timestamp: string;
   duration_ms?: number | null;
-  task_id?: string;
-  message_id?: string;
-  correlation_id?: string;
+  task_id?: string | null;
+  message_id?: string | null;
+  correlation_id?: string | null;
+  summary?: string | null;
   payload?: Record<string, unknown>;
-  tags?: Record<string, string>;
+  metadata?: Record<string, unknown> | null;
+  tags?: string[];
+  namespace?: string | null;
 }
 
 /** LLM invocation token and cost data. */
 export interface LLMUsage {
   model: string;
+  provider?: string | null;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cached_tokens?: number;
   estimated_cost_usd?: number | null;
   duration_ms?: number | null;
+  request_id?: string | null;
+  agent_id?: string | null;
+  task_id?: string | null;
+  trace_id?: string | null;
 }
 
 /** Per-model breakdown in a usage summary. */
 export interface ModelUsageBreakdown {
   model: string;
+  provider?: string | null;
+  requests: number;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  total_cost_usd: number;
-  invocations: number;
+  cached_tokens?: number;
+  estimated_cost_usd: number;
 }
 
 /** Per-agent breakdown in a usage summary. */
 export interface AgentUsageBreakdown {
   agent_id: string;
+  requests: number;
   total_tokens: number;
-  total_cost_usd: number;
-  invocations: number;
+  estimated_cost_usd: number;
+  by_model?: ModelUsageBreakdown[];
 }
 
 /** Aggregated LLM usage and cost summary. */
 export interface UsageSummary {
-  namespace?: string;
-  since?: string;
-  until?: string;
-  total_tokens: number;
-  total_cost_usd: number;
-  total_invocations: number;
+  period_start: string;
+  period_end: string;
+  namespace?: string | null;
+  total_requests?: number;
+  total_prompt_tokens?: number;
+  total_completion_tokens?: number;
+  total_tokens?: number;
+  total_cached_tokens?: number;
+  total_estimated_cost_usd?: number;
   by_model?: ModelUsageBreakdown[];
   by_agent?: AgentUsageBreakdown[];
 }

@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 log = logging.getLogger("aip.discovery")
 
 PROBE_TIMEOUT = 5.0
-DISCOVERY_PROFILES = ("aip", "a2a", "openai")
+DISCOVERY_PROFILES = ("aip", "a2a", "openai", "anthropic")
 
 
 @dataclass
@@ -259,6 +259,29 @@ async def _probe_openai(client, base_url: str) -> DiscoveryResult | None:
         return None
 
 
+async def _probe_anthropic(client, base_url: str) -> DiscoveryResult | None:
+    try:
+        resp = await client.post(
+            f"{base_url}/v1/messages",
+            json={"model": "probe", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+        )
+        if resp.status_code in (200, 400, 401, 422):
+            parsed = urlparse(base_url)
+            return DiscoveryResult(
+                protocol="anthropic",
+                base_url=base_url,
+                agent_id=_derive_id(base_url),
+                display_name=f"Anthropic API @ {parsed.hostname}",
+                capabilities=["messaging"],
+                health_endpoint=f"{base_url}/v1/messages",
+                message_endpoint=f"{base_url}/v1/messages",
+                metadata={"provider": "anthropic"},
+            )
+        return None
+    except Exception:
+        return None
+
+
 async def _probe_health(client, base_url: str) -> str | None:
     for path in ("/health", "/api/health", "/healthz", "/v1/health"):
         try:
@@ -274,6 +297,7 @@ _PROBE_FUNCTIONS = {
     "aip": _probe_aip,
     "a2a": _probe_a2a,
     "openai": _probe_openai,
+    "anthropic": _probe_anthropic,
 }
 
 
