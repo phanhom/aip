@@ -15,7 +15,7 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 from aip.bridge import BridgeConfig
 from aip.discovery import DiscoveryError, DiscoveryResult, discover

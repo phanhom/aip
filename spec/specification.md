@@ -2518,6 +2518,336 @@ A platform that detects an unknown protocol SHOULD still register the agent with
 
 ---
 
+## 18. Standard Action Payload Schemas
+
+### 18.1 Overview
+
+Section 4.2 defines the standard action names. This section defines the RECOMMENDED `payload` structure for each action. Implementations SHOULD follow these schemas for standard actions to ensure interoperability across platforms.
+
+All fields in action payloads are OPTIONAL unless stated otherwise. Receivers MUST accept payloads with additional fields they do not understand (forward-compatible).
+
+### 18.2 `assign_task`
+
+A coordinator delegates a unit of work to another agent.
+
+```json
+{
+  "instruction": "Design the order service REST API with OpenAPI output",
+  "deliverables": ["openapi", "risk_report"],
+  "deadline": "2026-03-14T18:00:00Z",
+  "context": {
+    "project": "e-commerce-backend",
+    "requirements_url": "https://docs.example.com/requirements/orders"
+  },
+  "budget": {
+    "max_tokens": 100000,
+    "max_cost_usd": 5.00
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `instruction` | string | REQUIRED. The task description in natural language. |
+| `deliverables` | array[string] | OPTIONAL. Expected output artifact types or names. |
+| `deadline` | string (ISO 8601) | OPTIONAL. Soft deadline for completion. |
+| `context` | object | OPTIONAL. Arbitrary context for the task (project info, references, etc.). |
+| `budget` | object | OPTIONAL. Resource constraints: `max_tokens`, `max_cost_usd`, `max_duration_seconds`. |
+| `parent_task_id` | string | OPTIONAL. Links this sub-task to a parent task for decomposition tracking. |
+| `tools` | array[string] | OPTIONAL. Tools the assignee is authorized to use for this task. |
+
+### 18.3 `submit_report`
+
+An agent delivers work results back to its requester.
+
+```json
+{
+  "summary": "Order service API draft complete. 12 endpoints defined.",
+  "status": "completed",
+  "artifacts": [
+    { "artifact_id": "art-001", "name": "orders-api.yaml", "mime_type": "application/yaml" }
+  ],
+  "metrics": {
+    "tokens_used": 45000,
+    "duration_seconds": 120,
+    "estimated_cost_usd": 2.30
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `summary` | string | REQUIRED. Human-readable summary of the work done. |
+| `status` | string | OPTIONAL. `"completed"`, `"partial"`, `"failed"`. Default: `"completed"`. |
+| `artifacts` | array[Artifact] | OPTIONAL. Produced artifacts (files, data). |
+| `metrics` | object | OPTIONAL. Execution metrics: `tokens_used`, `duration_seconds`, `estimated_cost_usd`. |
+| `issues` | array[string] | OPTIONAL. Problems encountered during execution. |
+| `next_steps` | array[string] | OPTIONAL. Suggested follow-up actions. |
+
+### 18.4 `request_context`
+
+An agent requests information or resources from another agent.
+
+```json
+{
+  "question": "What are the current database schema constraints for the orders table?",
+  "scope": "technical",
+  "format": "text/plain",
+  "urgency": "normal"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `question` | string | REQUIRED. The information request in natural language. |
+| `scope` | string | OPTIONAL. Narrows the context domain: `"technical"`, `"business"`, `"operational"`. |
+| `format` | string | OPTIONAL. Preferred response format MIME type. |
+| `references` | array[string] | OPTIONAL. URIs to relevant resources the respondent should consider. |
+
+### 18.5 `request_approval`
+
+An agent requests sign-off before proceeding.
+
+```json
+{
+  "action_description": "Deploy order-service v2.1.0 to production",
+  "risk_level": "high",
+  "impact": "Affects all active orders. Estimated 2-minute downtime.",
+  "rollback_plan": "Revert to v2.0.3 via blue-green deployment",
+  "evidence": [
+    { "artifact_id": "art-002", "name": "test-report.html", "mime_type": "text/html" }
+  ],
+  "deadline": "2026-03-14T16:00:00Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action_description` | string | REQUIRED. What is being approved. |
+| `risk_level` | string | OPTIONAL. `"low"`, `"medium"`, `"high"`, `"critical"`. |
+| `impact` | string | OPTIONAL. Human-readable impact assessment. |
+| `rollback_plan` | string | OPTIONAL. How to undo the action if it goes wrong. |
+| `evidence` | array[Artifact] | OPTIONAL. Supporting evidence (test reports, analysis). |
+| `deadline` | string (ISO 8601) | OPTIONAL. Approval needed by this time. |
+| `options` | array[string] | OPTIONAL. Available choices beyond approve/reject (e.g., `"approve_with_conditions"`). |
+
+### 18.6 `user_instruction`
+
+A human user gives a directive to an agent.
+
+```json
+{
+  "instruction": "Focus on the payment integration first, skip the email notifications for now",
+  "context": {
+    "conversation_id": "conv-001",
+    "thread": "backend-api-design"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `instruction` | string | REQUIRED. The human's directive in natural language. |
+| `context` | object | OPTIONAL. Conversation context, thread references, etc. |
+| `attachments` | array[Artifact] | OPTIONAL. Files or images the user is sharing. |
+
+### 18.7 `handoff`
+
+Transfer responsibility for a task to another agent.
+
+```json
+{
+  "task_id": "task-001",
+  "reason": "Requires frontend expertise beyond my capabilities",
+  "context_summary": "API design is 80% complete. Remaining: frontend integration testing.",
+  "artifacts": [
+    { "artifact_id": "art-003", "name": "api-draft.yaml", "mime_type": "application/yaml" }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task_id` | string | REQUIRED. The task being handed off. |
+| `reason` | string | REQUIRED. Why the handoff is happening. |
+| `context_summary` | string | OPTIONAL. Summary of work done so far. |
+| `artifacts` | array[Artifact] | OPTIONAL. In-progress artifacts to transfer. |
+
+### 18.8 `escalate`
+
+Escalate an issue to a higher-authority agent.
+
+```json
+{
+  "task_id": "task-001",
+  "severity": "high",
+  "reason": "Conflicting requirements between API spec and database constraints",
+  "attempted_resolution": "Tried normalizing the schema but breaks backward compatibility",
+  "suggested_action": "Decision needed: break backward compatibility or add migration layer"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task_id` | string | OPTIONAL. Related task. |
+| `severity` | string | REQUIRED. `"low"`, `"medium"`, `"high"`, `"critical"`. |
+| `reason` | string | REQUIRED. What went wrong or needs attention. |
+| `attempted_resolution` | string | OPTIONAL. What the agent already tried. |
+| `suggested_action` | string | OPTIONAL. What the agent thinks should happen. |
+
+### 18.9 `publish_status`
+
+Broadcast a status update (used by platforms for event distribution).
+
+```json
+{
+  "event": "agent.degraded",
+  "agent_id": "agent-backend",
+  "previous_status": "active",
+  "current_status": "degraded",
+  "reason": "3 consecutive heartbeat failures",
+  "timestamp": "2026-03-12T10:05:00Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event` | string | REQUIRED. Event type (e.g., `"agent.registered"`, `"agent.failed"`). |
+| `agent_id` | string | REQUIRED. Affected agent. |
+| `previous_status` | string | OPTIONAL. Status before the event. |
+| `current_status` | string | OPTIONAL. Status after the event. |
+| `reason` | string | OPTIONAL. Human-readable explanation. |
+| `timestamp` | string (ISO 8601) | OPTIONAL. When the event occurred. |
+
+### 18.10 Schema Enforcement
+
+- Senders SHOULD validate their payloads against these schemas before sending.
+- Receivers MUST NOT reject a message solely because the payload contains unknown fields.
+- Receivers MAY return `aip/execution/invalid_payload` if REQUIRED fields are missing.
+- The `instruction` field (present in `assign_task`, `user_instruction`) is the minimum viable payload — agents SHOULD be able to act on `instruction` alone.
+
+---
+
+## 19. Message Routing
+
+### 19.1 Scope
+
+This section defines how AIP messages are routed between agents. Routing is a **platform responsibility** — the protocol defines the rules, platforms implement them.
+
+Individual agents are NOT required to implement routing. An agent only needs to handle messages addressed to itself.
+
+### 19.2 Routing Model
+
+AIP uses a **hub-and-spoke** model: agents connect to a platform, and the platform routes messages between them.
+
+```
+Agent A ──► Platform ──► Agent B
+              │
+              └──► Agent C
+```
+
+There is no requirement for agents to connect directly to each other. The platform acts as the message bus.
+
+### 19.3 Routing Fields
+
+The `AIPMessage` contains several fields that inform routing decisions:
+
+| Field | Purpose |
+|-------|---------|
+| `to` | REQUIRED. Target agent ID. The platform resolves this to a registered agent. |
+| `to_role` | OPTIONAL. If `to` is not found, route to any agent matching this role. |
+| `to_host` | OPTIONAL. Target hostname for cross-host routing. |
+| `to_base_url` | OPTIONAL. Direct URL override — bypass registry lookup. |
+| `route_scope` | OPTIONAL. `"local"` (same host) or `"remote"` (cross-host). Default: `"local"`. |
+
+### 19.4 Routing Algorithm
+
+When a platform receives `POST /v1/aip`, it MUST apply the following routing logic:
+
+1. **Direct match**: If `to` matches a registered `agent_id`, route to that agent.
+2. **Role match**: If no direct match and `to_role` is set, route to any healthy agent with that role in the same namespace.
+3. **URL override**: If `to_base_url` is set, send directly to that URL (skip registry).
+4. **Self-handling**: If `to` matches the platform's own ID, the platform handles the message itself.
+5. **Not found**: If no match, return `aip/protocol/agent_not_found`.
+
+### 19.5 Delivery Semantics
+
+| Requirement | Rule |
+|-------------|------|
+| **At-least-once** | The platform MUST attempt delivery at least once. |
+| **Idempotency** | The platform SHOULD deduplicate messages using `message_id` + `Idempotency-Key`. |
+| **Ordering** | Messages with the same `correlation_id` SHOULD be delivered in order. The platform MAY relax this for messages with different `correlation_id` values. |
+| **Timeout** | If the target agent does not respond within 120 seconds (or the platform's configured timeout), the platform MUST return `aip/protocol/agent_unavailable`. |
+| **Retry** | For transient failures (5xx, timeout), the platform SHOULD retry with exponential backoff (max 3 attempts). |
+
+### 19.6 Response Forwarding
+
+When the platform routes a message to Agent B on behalf of Agent A:
+
+1. The platform forwards Agent B's response (AIPAck or SSE stream) back to Agent A.
+2. The platform MUST NOT modify the response content, but MAY add trace metadata.
+3. If Agent B returns an SSE stream, the platform MUST forward the stream events to Agent A as-is.
+4. The platform SHOULD record the exchange in its trace system (Section 10).
+
+### 19.7 Namespace Isolation
+
+Messages are routed within namespace boundaries:
+
+- An agent in namespace `"team-a"` can only send to agents in `"team-a"` by default.
+- Cross-namespace messaging requires explicit platform policy (`route_scope: "remote"` or a platform-level ACL).
+- The platform MUST enforce namespace isolation unless explicitly configured otherwise.
+
+### 19.8 Callback Routing
+
+When an `AIPMessage` includes `callback_url`:
+
+1. The platform routes the message to the target agent normally.
+2. When the task completes (or reaches a terminal state), the target agent (or the platform) sends the result to the `callback_url` via `POST`.
+3. If `callback_secret` is set, the callback payload MUST be signed with HMAC-SHA256 using the secret, with the signature in the `X-AIP-Signature` header.
+
+---
+
+## 20. Error Response Format (RFC 7807)
+
+### 20.1 Motivation
+
+AIP error responses (Section 9.3) use `AIPAck` with `ok: false`. For richer error reporting — especially for platform-level errors that are not part of a message exchange — AIP RECOMMENDS RFC 7807 Problem Details format.
+
+### 20.2 Problem Details Object
+
+Platforms and agents MAY return errors in RFC 7807 format with `Content-Type: application/problem+json`:
+
+```json
+{
+  "type": "https://aip-protocol.dev/errors/aip/protocol/agent_not_found",
+  "title": "Agent Not Found",
+  "status": 404,
+  "detail": "No agent with ID 'agent-backend' is registered in namespace 'acme-corp'.",
+  "instance": "/v1/registry/agents/agent-backend",
+  "aip_error_code": "aip/protocol/agent_not_found",
+  "trace_id": "abc-123"
+}
+```
+
+| Field | Type | Source | Description |
+|-------|------|--------|-------------|
+| `type` | string (URI) | RFC 7807 | URI identifying the error type. RECOMMENDED: `https://aip-protocol.dev/errors/{error_code}`. |
+| `title` | string | RFC 7807 | Short human-readable summary. |
+| `status` | integer | RFC 7807 | HTTP status code. |
+| `detail` | string | RFC 7807 | Human-readable explanation specific to this occurrence. |
+| `instance` | string | RFC 7807 | URI reference to the specific request that caused the error. |
+| `aip_error_code` | string | AIP extension | The AIP error code from Section 9.1. |
+| `trace_id` | string | AIP extension | Trace ID for correlating with the observability system. |
+
+### 20.3 Compatibility
+
+- AIP messages (POST /v1/aip) SHOULD continue to use `AIPAck` with `ok: false` for backward compatibility.
+- Platform endpoints (registry, traces, usage) MAY use RFC 7807 for error responses.
+- Clients SHOULD check `Content-Type` to determine the error format.
+- Returning RFC 7807 is OPTIONAL but RECOMMENDED for new platform implementations.
+
+---
+
 ## Appendix C: Relationship to Other Protocols
 
 (See also Appendix B for JSON-RPC 2.0 interoperability.)

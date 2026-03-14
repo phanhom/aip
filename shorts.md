@@ -224,11 +224,13 @@ curl -X POST http://agent.example.com/v1/artifacts -F "file=@report.pdf" -F "tas
 | # | Gap | Status |
 |---|-----|--------|
 | 16 | No JSON-RPC compat | ✅ Bidirectional bridge |
-| 17 | No payload schemas for standard actions | ⚠️ Per-skill only |
-| 18 | No webhooks | ✅ callback_url + HMAC |
+| 17 | No payload schemas for standard actions | ✅ Section 18: 9 standard action schemas |
+| 18 | No webhooks | ✅ callback_url + HMAC-SHA256 |
 | 19 | No docs site / playground | ❌ |
 | 20 | No idempotency | ✅ Idempotency-Key |
-| 21 | No conformance certification | ❌ |
+| 21 | No conformance certification | ✅ 22-test suite (basic/full levels) |
+| 22 | No message routing standard | ✅ Section 19: routing algorithm + delivery semantics |
+| 23 | No error format standard | ✅ Section 20: RFC 7807 Problem Details |
 
 ---
 
@@ -238,15 +240,13 @@ curl -X POST http://agent.example.com/v1/artifacts -F "file=@report.pdf" -F "tas
 P0    ████████████████████  4/4
 P1    ████████████████████  7/7
 P1.5  ████████████████████  4/4   ← observability & cost tracking
-P2    ██████████████░░░░░░  4/6
+P2    ██████████████████░░  7/8
 ```
 
 **What's left:**
 
-1. Standard action payload schemas
-2. Documentation site + interactive playground
-3. Conformance test suite expansion + certification badge
-4. Polish: callback_secret, RFC 7807, W3C trace alignment, 1.0 GA
+1. Documentation site + interactive playground
+2. Polish: W3C trace alignment, 1.0 GA
 
 ---
 
@@ -349,3 +349,9 @@ aip bridge --config gateway.yaml   # starts gateway with all agents
 - Server-side translation: platform converts AIP ↔ native API transparently
 - Python SDK `discover()` function for platform implementations
 - Health monitoring adapted per protocol profile
+
+### v1.6.0 — Protocol Completeness
+- **Standard action payload schemas** (Section 18): `assign_task`, `submit_report`, `request_context`, `request_approval`, `user_instruction`, `handoff`, `escalate`, `publish_status` — all with defined payload structures
+- **Message routing spec** (Section 19): hub-and-spoke model, routing algorithm, delivery semantics, namespace isolation, callback routing with HMAC-SHA256
+- **RFC 7807 error format** (Section 20): `application/problem+json` for platform endpoints
+- **Conformance test suite**: 22 tests across 2 levels (basic/full), compliance verdicts
