@@ -176,6 +176,30 @@ export interface Presentation {
   provider?: Provider | null;
 }
 
+/** Platform-assigned identity and constraints for an agent. */
+export interface AgentAssignment {
+  /** Platform-assigned role (may differ from the agent's self-declared role). */
+  assigned_role?: string | null;
+  /** Team or department this agent belongs to. */
+  team?: string | null;
+  /** Human-readable description of the agent's work boundaries. */
+  scope?: string | null;
+  /** Tools or resources the platform grants beyond the agent's native capabilities. */
+  granted_tools?: string[];
+  /** Additional skill descriptors the platform injects (merged with native skills). */
+  granted_skills?: Skill[];
+  /** Boundaries or rules the platform imposes on this agent. */
+  constraints?: string[];
+  /** Agent ID of the assigned supervisor. */
+  supervisor?: string | null;
+  /** Platform-assigned priority level (e.g., "high", "normal", "low"). */
+  priority?: string | null;
+  /** ISO 8601 timestamp of when the assignment was last updated. */
+  assigned_at?: string | null;
+  /** Platform-specific extension fields. */
+  metadata?: Record<string, unknown> | null;
+}
+
 /** OAuth2 configuration for agent authentication. */
 export interface OAuth2Config {
   token_url: string;
@@ -228,6 +252,7 @@ export interface AgentStatus {
   last_message_at?: string | null;
   last_seen_at?: string | null;
   metadata?: Record<string, unknown> | null;
+  assignment?: AgentAssignment | null;
   work?: WorkSnapshot | null;
   authentication?: Authentication;
   [key: string]: unknown;

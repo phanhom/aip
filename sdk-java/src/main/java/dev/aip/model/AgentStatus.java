@@ -36,5 +36,6 @@ public record AgentStatus(
         @JsonProperty("last_message_at") String lastMessageAt,
         @JsonProperty("last_seen_at") String lastSeenAt,
         @JsonProperty("metadata") Map<String, Object> metadata,
+        @JsonProperty("assignment") AgentAssignment assignment,
         @JsonProperty("work") WorkSnapshot work
 ) {}

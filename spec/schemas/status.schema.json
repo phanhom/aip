@@ -170,6 +170,69 @@
       "additionalProperties": true
     },
 
+    "AgentAssignment": {
+      "type": "object",
+      "description": "Platform-assigned identity and constraints. Represents the 'job description' the platform gives an agent, separate from its native profile.",
+      "properties": {
+        "assigned_role": {
+          "type": ["string", "null"],
+          "description": "Platform-assigned role (may differ from the agent's self-declared role).",
+          "default": null
+        },
+        "team": {
+          "type": ["string", "null"],
+          "description": "Team or department this agent belongs to.",
+          "default": null
+        },
+        "scope": {
+          "type": ["string", "null"],
+          "description": "Human-readable description of the agent's work boundaries.",
+          "default": null
+        },
+        "granted_tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tools or resources the platform grants beyond the agent's native capabilities.",
+          "default": []
+        },
+        "granted_skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Skill" },
+          "description": "Additional skill descriptors the platform injects (merged with native skills for discovery).",
+          "default": []
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Boundaries or rules the platform imposes on this agent.",
+          "default": []
+        },
+        "supervisor": {
+          "type": ["string", "null"],
+          "description": "Agent ID of the assigned supervisor (may override the agent's self-declared superior).",
+          "default": null
+        },
+        "priority": {
+          "type": ["string", "null"],
+          "description": "Platform-assigned priority level (e.g., \"high\", \"normal\", \"low\").",
+          "default": null
+        },
+        "assigned_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when the assignment was last updated.",
+          "default": null
+        },
+        "metadata": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "description": "Platform-specific extension fields.",
+          "default": null
+        }
+      },
+      "additionalProperties": true
+    },
+
     "AuthenticationInfo": {
       "type": "object",
       "description": "Supported authentication schemes. Enables clients to discover how to authenticate before sending messages.",
@@ -421,6 +484,14 @@
           "type": ["object", "null"],
           "description": "Implementation-specific metadata.",
           "additionalProperties": true,
+          "default": null
+        },
+        "assignment": {
+          "oneOf": [
+            { "$ref": "#/$defs/AgentAssignment" },
+            { "type": "null" }
+          ],
+          "description": "Platform-assigned role, scope, and constraints (see Section 5.12). Null if the agent has no platform assignment.",
           "default": null
         },
         "work": {

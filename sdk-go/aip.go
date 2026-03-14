@@ -223,6 +223,21 @@ type Presentation struct {
 	Provider         *Provider `json:"provider,omitempty"`
 }
 
+// AgentAssignment represents the platform-assigned identity and constraints for an agent.
+// It is the "job description" the platform gives, separate from the agent's native profile.
+type AgentAssignment struct {
+	AssignedRole  string                 `json:"assigned_role,omitempty"`
+	Team          string                 `json:"team,omitempty"`
+	Scope         string                 `json:"scope,omitempty"`
+	GrantedTools  []string               `json:"granted_tools,omitempty"`
+	GrantedSkills []Skill                `json:"granted_skills,omitempty"`
+	Constraints   []string               `json:"constraints,omitempty"`
+	Supervisor    string                 `json:"supervisor,omitempty"`
+	Priority      string                 `json:"priority,omitempty"`
+	AssignedAt    string                 `json:"assigned_at,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // AuthenticationInfo describes authentication schemes supported by an agent.
 type AuthenticationInfo struct {
 	Schemes []string               `json:"schemes,omitempty"`
@@ -272,6 +287,7 @@ type AgentStatus struct {
 	LastMessageAt      string                 `json:"last_message_at,omitempty"`
 	LastSeenAt         string                 `json:"last_seen_at,omitempty"`
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+	Assignment         *AgentAssignment       `json:"assignment,omitempty"`
 }
 
 // GroupStatus is the aggregated status for a group of agents.

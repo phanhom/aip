@@ -386,6 +386,7 @@ The scope is specified via query parameter: `GET /v1/status?scope=self`.
 | `last_message_at` | string \| null | OPTIONAL | ISO 8601 timestamp of last AIP message. |
 | `last_seen_at` | string \| null | OPTIONAL | ISO 8601 timestamp of last activity. |
 | `metadata` | object \| null | OPTIONAL | Implementation-specific metadata. |
+| `assignment` | AgentAssignment \| null | OPTIONAL | Platform-assigned role, scope, and constraints (see 5.12). `null` if the agent has no platform assignment. |
 
 ### 5.4 Work Snapshot (`WorkSnapshot`)
 
@@ -605,6 +606,76 @@ The `namespace` field on `AgentStatus` and `GroupStatus` provides a logical isol
 - Agents with different `namespace` values SHOULD be invisible to each other in discovery (`GET /v1/status?scope=group` or `scope=subtree`) unless the platform explicitly enables cross-namespace visibility.
 - Messages sent across namespaces SHOULD require explicit cross-namespace authorization.
 - If `namespace` is `null`, the agent is in the default namespace.
+
+### 5.12 Agent Assignment (`AgentAssignment`)
+
+An agent has two identities: its **native profile** (self-declared role, skills, tools) and its **platform assignment** (what the organization tells it to do). The `AgentAssignment` object represents the latter.
+
+Think of it as the difference between a person's resume and their job description — the resume is theirs, the job description is the company's.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `assigned_role` | string \| null | OPTIONAL | Platform-assigned role, may differ from the agent's self-declared `role`. Example: agent declares `role: "coder"`, platform assigns `assigned_role: "backend-engineer"`. |
+| `team` | string \| null | OPTIONAL | Team or department this agent belongs to. Example: `"order-service"`, `"infra"`, `"qa"`. |
+| `scope` | string \| null | OPTIONAL | Human-readable description of the agent's work boundaries. Example: `"Order service backend development and maintenance"`. |
+| `granted_tools` | array[string] | OPTIONAL | Tools or resources the platform grants to this agent beyond its native capabilities. Example: `["prod-db-readonly", "staging-deploy", "sentry-access"]`. |
+| `granted_skills` | array[Skill] | OPTIONAL | Additional skill descriptors the platform injects (same schema as Section 5.7). These are merged with the agent's native `skills` for discovery. |
+| `constraints` | array[string] | OPTIONAL | Boundaries the platform imposes. Example: `["No direct production writes", "Max 10 concurrent tasks", "Requires approval for deployments"]`. |
+| `supervisor` | string \| null | OPTIONAL | Agent ID of the assigned supervisor (may override the agent's self-declared `superior`). |
+| `priority` | string \| null | OPTIONAL | Platform-assigned priority level for this agent's work. Example: `"high"`, `"normal"`, `"low"`. |
+| `assigned_at` | string \| null | OPTIONAL | ISO 8601 timestamp of when the assignment was last updated. |
+| `metadata` | object \| null | OPTIONAL | Platform-specific extension fields. |
+
+**Example:**
+
+```json
+{
+  "agent_id": "claw-a",
+  "role": "coder",
+  "skills": [
+    { "id": "python", "name": "Python", "description": "Python development" },
+    { "id": "go", "name": "Go", "description": "Go development" }
+  ],
+  "assignment": {
+    "assigned_role": "backend-engineer",
+    "team": "order-service",
+    "scope": "Order service backend — API design, implementation, and code review",
+    "granted_tools": ["prod-db-readonly", "staging-deploy"],
+    "constraints": ["No direct production writes", "Max 10 concurrent tasks"],
+    "supervisor": "tech-lead-agent",
+    "priority": "high",
+    "assigned_at": "2026-03-12T10:00:00Z"
+  }
+}
+```
+
+**Semantics:**
+
+- The `assignment` is entirely platform-controlled. Agents MUST NOT modify their own assignment.
+- When both `role` and `assigned_role` are present, dashboards SHOULD display `assigned_role` as the primary label and `role` as the secondary ("native") label.
+- `granted_skills` are merged with native `skills` for discovery purposes. Callers querying the agent's capabilities see the union of both.
+- `constraints` are informational — they describe what the platform expects, but enforcement is the platform's responsibility (not the agent's).
+- `assignment` MAY be `null` (the agent has no platform assignment — it operates in its native capacity).
+
+#### 5.12.1 Assignment Delivery
+
+Assignments reach the agent through three mechanisms (platforms MAY use any combination):
+
+1. **Registration response** — the platform includes `assignment` in the `AgentRegistrationResponse` (Section 15.4). The agent stores it locally and reflects it in `GET /v1/status`.
+
+2. **Heartbeat command** — the platform sends an `assign` command in the heartbeat ACK (Section 15.6.3). The agent updates its stored assignment and reflects it in the next status response.
+
+3. **Dedicated endpoint** — `PUT /v1/registry/agents/{agent_id}/assignment` allows the platform (or an authorized caller) to update the assignment at any time. The platform SHOULD also send a `refresh_status` heartbeat command so the agent re-announces its updated status.
+
+#### 5.12.2 Assignment Lifecycle
+
+| Event | Behavior |
+|-------|----------|
+| Agent registers | Platform MAY include `assignment` in the registration response. |
+| Platform updates assignment | Platform sends `assign` command via heartbeat or calls PUT endpoint. |
+| Agent re-registers (after restart) | Platform SHOULD re-send the last known assignment. |
+| Agent deregisters | Assignment is discarded. |
+| Assignment cleared | Platform sends `assign` with empty/null payload — agent reverts to native profile only. |
 
 ---
 
@@ -1679,7 +1750,16 @@ If any step fails, the platform returns the appropriate error code (see 15.10) a
   "heartbeat_url": "https://platform.example.com/v1/registry/agents/my-agent/heartbeat",
   "platform_aip_url": "https://platform.example.com/v1/aip",
   "capabilities_detected": ["streaming", "tasks", "artifacts"],
-  "cached_status": { "...full AgentStatus from probe..." }
+  "cached_status": { "...full AgentStatus from probe..." },
+  "assignment": {
+    "assigned_role": "backend-engineer",
+    "team": "order-service",
+    "scope": "Order service backend",
+    "granted_tools": ["prod-db-readonly"],
+    "constraints": ["No direct production writes"],
+    "supervisor": "tech-lead-agent",
+    "assigned_at": "2026-03-12T10:00:00Z"
+  }
 }
 ```
 
@@ -1696,6 +1776,7 @@ If any step fails, the platform returns the appropriate error code (see 15.10) a
 | `platform_aip_url` | string | The platform's AIP messaging endpoint — agents can send messages here. |
 | `capabilities_detected` | array[string] | What the platform detected the agent supports (see 15.5). |
 | `cached_status` | AgentStatus | The full AgentStatus from the probe. |
+| `assignment` | AgentAssignment \| null | OPTIONAL. Initial assignment for this agent (see 5.12). `null` or omitted if no assignment. |
 
 ### 15.5 Capability Detection
 
@@ -1767,6 +1848,7 @@ The heartbeat response MAY include **commands** — instructions from the platfo
 | `shutdown` | Agent should gracefully shut down and deregister. | `{ "reason": "...", "deadline": "..." }` |
 | `update_config` | Platform pushes configuration to the agent. | `{ "config": { ... } }` |
 | `re_register` | Agent should re-register (e.g., after platform migration). | `{ "new_platform_url": "..." }` |
+| `assign` | Platform pushes or updates the agent's assignment (see 5.12). Agent MUST store the assignment and reflect it in `GET /v1/status`. | `AgentAssignment` object (see 5.12). Send `null` to clear. |
 
 ```json
 {
@@ -1941,7 +2023,62 @@ Platform-initiated health check — the "click retry" action. Used when a human 
 - Rate limiting: Platforms SHOULD limit probe frequency to prevent abuse (e.g., max 1 probe per agent per 5 seconds).
 - The probe does NOT re-register the agent. Registration data (credentials, namespace, endpoints) remains unchanged.
 
-### 15.12 Error Codes
+### 15.12 Assignment (`PUT /v1/registry/agents/{agent_id}/assignment`)
+
+Update the platform assignment for a registered agent. This is the imperative API for Section 5.12 — use it when the platform reassigns an agent at any time.
+
+**Request:**
+
+```json
+{
+  "assigned_role": "backend-engineer",
+  "team": "order-service",
+  "scope": "Order service backend — API design, implementation, code review",
+  "granted_tools": ["prod-db-readonly", "staging-deploy"],
+  "granted_skills": [
+    { "id": "deploy", "name": "Deployment", "description": "Deploy to staging env" }
+  ],
+  "constraints": ["No direct production writes", "Max 10 concurrent tasks"],
+  "supervisor": "tech-lead-agent",
+  "priority": "high",
+  "metadata": {}
+}
+```
+
+The request body is a full `AgentAssignment` object. To clear the assignment, send an empty object `{}` — the platform resets all fields to their defaults (no assignment).
+
+**Response (200 OK):**
+
+```json
+{
+  "agent_id": "claw-a",
+  "assignment": {
+    "assigned_role": "backend-engineer",
+    "team": "order-service",
+    "scope": "Order service backend — API design, implementation, code review",
+    "granted_tools": ["prod-db-readonly", "staging-deploy"],
+    "constraints": ["No direct production writes", "Max 10 concurrent tasks"],
+    "supervisor": "tech-lead-agent",
+    "priority": "high",
+    "assigned_at": "2026-03-12T14:30:00Z"
+  }
+}
+```
+
+**Error responses:**
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `aip/registry/not_found` | 404 | Agent ID not found in registry. |
+| `aip/registry/namespace_denied` | 403 | Caller not authorized for this agent's namespace. |
+
+**Platform behavior after updating:**
+
+1. Store the new assignment in the registry.
+2. On the agent's next heartbeat ACK, include an `assign` command with the updated assignment so the agent reflects it locally.
+3. Optionally also include a `refresh_status` command so the agent re-announces via `GET /v1/status`.
+
+### 15.13 Error Codes
 
 | Code | HTTP | Description |
 |------|------|-------------|

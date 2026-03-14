@@ -75,6 +75,25 @@ class Presentation(BaseModel):
     provider: Provider | None = None
 
 
+class AgentAssignment(BaseModel):
+    """Platform-assigned identity and constraints.
+
+    Represents the "job description" the platform gives an agent,
+    separate from its native profile (role, skills, tools).
+    """
+
+    assigned_role: str | None = None
+    team: str | None = None
+    scope: str | None = None
+    granted_tools: list[str] = Field(default_factory=list)
+    granted_skills: list[SkillDescriptor] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    supervisor: str | None = None
+    priority: str | None = None
+    assigned_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class AuthenticationInfo(BaseModel):
     """Authentication schemes supported by this agent."""
 
@@ -121,6 +140,7 @@ class AgentStatus(BaseModel):
     last_message_at: datetime | None = None
     last_seen_at: datetime | None = None
     metadata: dict[str, Any] | None = None
+    assignment: AgentAssignment | None = None
     work: WorkSnapshot | None = None
 
 

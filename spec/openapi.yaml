@@ -2,7 +2,7 @@ openapi: "3.1.0"
 
 info:
   title: Agent Interaction Protocol (AIP)
-  version: "1.3.0"
+  version: "1.4.0"
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     
@@ -678,6 +678,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProbeResult"
 
+  /v1/registry/agents/{agent_id}/assignment:
+    put:
+      operationId: updateAgentAssignment
+      summary: Update the platform assignment for a registered agent
+      description: |
+        Set or update the agent's platform-assigned role, scope, constraints, and tools.
+        Send an empty object `{}` to clear the assignment (agent reverts to native profile only).
+      tags: [registry]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentAssignment"
+      responses:
+        "200":
+          description: Assignment updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agent_id, assignment]
+                properties:
+                  agent_id:
+                    type: string
+                  assignment:
+                    $ref: "#/components/schemas/AgentAssignment"
+        "404":
+          description: Agent not found in registry
+        "403":
+          description: Not authorized for this agent's namespace
+
   /v1/registry/agents/{agent_id}/heartbeat:
     post:
       operationId: agentHeartbeat
@@ -752,6 +790,11 @@ components:
         heartbeat_url:
           type: string
           format: uri
+        assignment:
+          oneOf:
+            - $ref: "#/components/schemas/AgentAssignment"
+            - type: "null"
+          description: Initial platform assignment for this agent (see Section 5.12). Null or omitted if no assignment.
 
     AgentRegistrationRecord:
       type: object
@@ -819,6 +862,69 @@ components:
         next_heartbeat_at:
           type: string
           format: date-time
+        commands:
+          type: array
+          items:
+            type: object
+            required: [type]
+            properties:
+              type:
+                type: string
+                description: "Command types: refresh_status, drain, shutdown, update_config, re_register, assign"
+              payload:
+                type: object
+                additionalProperties: true
+                description: Command-specific payload. For type=assign, this is an AgentAssignment object.
+          default: []
+          description: Platform-to-agent commands (see spec Section 15.6.3).
+
+    AgentAssignment:
+      type: object
+      description: |
+        Platform-assigned identity and constraints for an agent.
+        Represents the "job description" the platform gives an agent, separate from its native profile.
+      properties:
+        assigned_role:
+          type: ["string", "null"]
+          description: Platform-assigned role (may differ from the agent's self-declared role).
+        team:
+          type: ["string", "null"]
+          description: Team or department this agent belongs to.
+        scope:
+          type: ["string", "null"]
+          description: Human-readable description of the agent's work boundaries.
+        granted_tools:
+          type: array
+          items:
+            type: string
+          default: []
+          description: Tools or resources the platform grants beyond the agent's native capabilities.
+        granted_skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/Skill"
+          default: []
+          description: Additional skill descriptors the platform injects (merged with native skills for discovery).
+        constraints:
+          type: array
+          items:
+            type: string
+          default: []
+          description: Boundaries or rules the platform imposes on this agent.
+        supervisor:
+          type: ["string", "null"]
+          description: Agent ID of the assigned supervisor (may override the agent's self-declared superior).
+        priority:
+          type: ["string", "null"]
+          description: Platform-assigned priority level (e.g., "high", "normal", "low").
+        assigned_at:
+          type: ["string", "null"]
+          format: date-time
+          description: ISO 8601 timestamp of when the assignment was last updated.
+        metadata:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: Platform-specific extension fields.
 
     ProbeResult:
       type: object
@@ -1324,6 +1430,11 @@ components:
         metadata:
           type: ["object", "null"]
           additionalProperties: true
+        assignment:
+          oneOf:
+            - $ref: "#/components/schemas/AgentAssignment"
+            - type: "null"
+          description: Platform-assigned role, scope, and constraints (see Section 5.12).
         work:
           oneOf:
             - $ref: "#/components/schemas/WorkSnapshot"

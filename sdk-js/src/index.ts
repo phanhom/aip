@@ -14,6 +14,7 @@ export {
   type AIPAck,
   type AIPMessage,
   type AIPPriority,
+  type AgentAssignment,
   type AgentStatus,
   type AgentUsageBreakdown,
   type ApprovalState,

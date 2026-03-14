@@ -15,7 +15,7 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 from aip.bridge import BridgeConfig
 from aip.gateway import AgentEntry, GatewayConfig
@@ -63,6 +63,7 @@ from aip.send import (
     send_batch,
 )
 from aip.status import (
+    AgentAssignment,
     AgentStatus,
     AuthenticationInfo,
     GroupStatus,
@@ -105,6 +106,7 @@ __all__ = [
     "SkillDescriptor",
     "Presentation",
     "Provider",
+    "AgentAssignment",
     "AuthenticationInfo",
     "RateLimitInfo",
     "WorkSnapshot",
