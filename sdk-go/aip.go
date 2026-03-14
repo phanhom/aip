@@ -55,7 +55,7 @@ const (
 const (
 	StatusScopeSelf    = "self"
 	StatusScopeSubtree = "subtree"
-	StatusScopeColony  = "colony"
+	StatusScopeGroup   = "group"
 )
 
 // Task state constants.
@@ -292,19 +292,20 @@ type AgentStatus struct {
 
 // GroupStatus is the aggregated status for a group of agents.
 type GroupStatus struct {
-	OK          bool                   `json:"ok"`
-	Service     string                 `json:"service,omitempty"`
-	Namespace   string                 `json:"namespace,omitempty"`
-	RootAgentID string                 `json:"root_agent_id,omitempty"`
-	Timestamp   string                 `json:"timestamp,omitempty"`
-	Agents      []AgentStatus          `json:"agents,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	OK                 bool                     `json:"ok"`
+	Service            string                   `json:"service,omitempty"`
+	Namespace          string                   `json:"namespace,omitempty"`
+	RootAgentID        string                   `json:"root_agent_id"`
+	Timestamp          string                   `json:"timestamp,omitempty"`
+	Topology           map[string][]string      `json:"topology,omitempty"`
+	WaitingForApproval bool                     `json:"waiting_for_approval,omitempty"`
+	Agents             []AgentStatus            `json:"agents,omitempty"`
 }
 
 // RecursiveStatusNode is a tree node for hierarchical agent discovery.
 type RecursiveStatusNode struct {
-	AgentStatus
-	Subordinates []RecursiveStatusNode `json:"subordinates,omitempty"`
+	Self         AgentStatus            `json:"self"`
+	Subordinates []RecursiveStatusNode  `json:"subordinates,omitempty"`
 }
 
 // Trace type constants for observability.
@@ -348,53 +349,69 @@ type TraceEvent struct {
 	AgentID       string                 `json:"agent_id"`
 	TraceType     string                 `json:"trace_type"`
 	Severity      string                 `json:"severity,omitempty"`
-	Timestamp     string                 `json:"ts"`
-	DurationMs    *float64               `json:"duration_ms,omitempty"`
+	Timestamp     string                 `json:"timestamp"`
+	DurationMs    *int                   `json:"duration_ms,omitempty"`
 	TaskID        string                 `json:"task_id,omitempty"`
 	MessageID     string                 `json:"message_id,omitempty"`
 	CorrelationID string                 `json:"correlation_id,omitempty"`
+	ParentEventID string                 `json:"parent_event_id,omitempty"`
+	Summary       string                 `json:"summary,omitempty"`
 	Payload       map[string]interface{} `json:"payload,omitempty"`
-	Tags          map[string]string      `json:"tags,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	Tags          []string               `json:"tags,omitempty"`
+	Namespace     string                 `json:"namespace,omitempty"`
 }
 
 // LLMUsage tracks token and cost data for a single LLM invocation.
 type LLMUsage struct {
-	Model             string   `json:"model"`
-	PromptTokens      int      `json:"prompt_tokens"`
-	CompletionTokens  int      `json:"completion_tokens"`
-	TotalTokens       int      `json:"total_tokens"`
-	EstimatedCostUSD  *float64 `json:"estimated_cost_usd,omitempty"`
-	DurationMs        *float64 `json:"duration_ms,omitempty"`
+	Model            string   `json:"model"`
+	Provider         string   `json:"provider,omitempty"`
+	PromptTokens     int      `json:"prompt_tokens"`
+	CompletionTokens int      `json:"completion_tokens"`
+	TotalTokens      int      `json:"total_tokens"`
+	CachedTokens     int      `json:"cached_tokens,omitempty"`
+	EstimatedCostUSD *float64 `json:"estimated_cost_usd,omitempty"`
+	DurationMs       *int     `json:"duration_ms,omitempty"`
+	RequestID        string   `json:"request_id,omitempty"`
+	AgentID          string   `json:"agent_id,omitempty"`
+	TaskID           string   `json:"task_id,omitempty"`
+	TraceID          string   `json:"trace_id,omitempty"`
 }
 
-// UsageSummary is an aggregated cost/usage report.
+// UsageSummary is an aggregated cost/usage report returned by GET /v1/usage.
 type UsageSummary struct {
-	Namespace        string                `json:"namespace,omitempty"`
-	Since            string                `json:"since,omitempty"`
-	Until            string                `json:"until,omitempty"`
-	TotalTokens      int                   `json:"total_tokens"`
-	TotalCostUSD     float64               `json:"total_cost_usd"`
-	TotalInvocations int                   `json:"total_invocations"`
-	ByModel          []ModelUsageBreakdown `json:"by_model,omitempty"`
-	ByAgent          []AgentUsageBreakdown `json:"by_agent,omitempty"`
+	PeriodStart           string                `json:"period_start"`
+	PeriodEnd             string                `json:"period_end"`
+	Namespace             string                `json:"namespace,omitempty"`
+	TotalRequests         int                   `json:"total_requests"`
+	TotalPromptTokens     int                   `json:"total_prompt_tokens"`
+	TotalCompletionTokens int                   `json:"total_completion_tokens"`
+	TotalTokens           int                   `json:"total_tokens"`
+	TotalCachedTokens     int                   `json:"total_cached_tokens"`
+	TotalEstimatedCostUSD float64               `json:"total_estimated_cost_usd"`
+	ByModel               []ModelUsageBreakdown `json:"by_model,omitempty"`
+	ByAgent               []AgentUsageBreakdown `json:"by_agent,omitempty"`
 }
 
 // ModelUsageBreakdown is per-model cost data within a UsageSummary.
 type ModelUsageBreakdown struct {
 	Model            string  `json:"model"`
+	Provider         string  `json:"provider,omitempty"`
+	Requests         int     `json:"requests"`
 	PromptTokens     int     `json:"prompt_tokens"`
 	CompletionTokens int     `json:"completion_tokens"`
 	TotalTokens      int     `json:"total_tokens"`
-	TotalCostUSD     float64 `json:"total_cost_usd"`
-	Invocations      int     `json:"invocations"`
+	CachedTokens     int     `json:"cached_tokens"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
 }
 
 // AgentUsageBreakdown is per-agent cost data within a UsageSummary.
 type AgentUsageBreakdown struct {
-	AgentID      string  `json:"agent_id"`
-	TotalTokens  int     `json:"total_tokens"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	Invocations  int     `json:"invocations"`
+	AgentID          string                `json:"agent_id"`
+	Requests         int                   `json:"requests"`
+	TotalTokens      int                   `json:"total_tokens"`
+	EstimatedCostUSD float64               `json:"estimated_cost_usd"`
+	ByModel          []ModelUsageBreakdown `json:"by_model,omitempty"`
 }
 
 // BuildMessage creates an AIPMessage with required fields and sensible defaults.

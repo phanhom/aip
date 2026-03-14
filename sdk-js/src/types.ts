@@ -281,21 +281,23 @@ export interface AIPTask {
 }
 
 /** Status scope for hierarchical queries. */
-export type StatusScope = "self" | "subtree" | "colony";
+export type StatusScope = "self" | "subtree" | "group";
 
 /** Aggregated status for a group of agents. */
 export interface GroupStatus {
   ok: boolean;
   service?: string;
-  namespace?: string;
-  root_agent_id?: string;
+  namespace?: string | null;
+  root_agent_id: string;
   timestamp?: string;
-  agents?: AgentStatus[];
-  metadata?: Record<string, unknown> | null;
+  topology?: Record<string, string[]>;
+  waiting_for_approval?: boolean;
+  agents: AgentStatus[];
 }
 
 /** Tree node for recursive/hierarchical agent discovery. */
-export interface RecursiveStatusNode extends AgentStatus {
+export interface RecursiveStatusNode {
+  self: AgentStatus;
   subordinates?: RecursiveStatusNode[];
 }
 

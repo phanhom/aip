@@ -10,7 +10,7 @@ Major protocol changes follow an RFC process:
 
 1. **Open an issue** describing the problem and proposed change.
 2. **Discuss** with maintainers and community in the issue thread.
-3. **Write an RFC** as a pull request to `spec/rfcs/` with:
+3. **Write an RFC** as a pull request with:
    - Motivation and problem statement
    - Proposed specification changes
    - Backward compatibility analysis

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Specification
+    url: https://github.com/phanhom/aip/blob/main/spec/specification.md
+    about: Read the full AIP specification before proposing changes.
+  - name: Contributing Guide
+    url: https://github.com/phanhom/aip/blob/main/CONTRIBUTING.md
+    about: How to contribute to AIP.

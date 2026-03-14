@@ -64,8 +64,19 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 |----------|---------|
 | `POST /v1/registry/agents` | Register an external agent (one API call to join) |
 | `GET /v1/registry/agents` | List/search registered agents |
+| `PATCH /v1/registry/agents/{id}` | Update agent registration (URL, creds) |
 | `DELETE /v1/registry/agents/{id}` | Deregister an agent |
-| `POST /v1/registry/agents/{id}/heartbeat` | Agent heartbeat (liveness signal) |
+| `POST /v1/registry/agents/{id}/heartbeat` | Agent heartbeat (liveness signal, with platform commands) |
+| `POST /v1/registry/agents/{id}/probe` | Platform-initiated health check ("click retry") |
+| `PUT /v1/registry/agents/{id}/assignment` | Update platform-assigned role, scope, constraints |
+
+**Multi-Agent Gateway** (one process hosting N agents):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /v1/agents` | Discover all hosted agents |
+| `GET /v1/agents/{id}/status` | Status of a specific hosted agent |
+| `POST /v1/agents/{id}/aip` | Send message to a specific hosted agent |
 
 ## One-Line Bridge
 

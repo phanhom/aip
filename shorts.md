@@ -238,6 +238,13 @@ GET    /v1/registry/agents/{id}              Get record + cached status
 PATCH  /v1/registry/agents/{id}              Update (migrate URL, rotate creds)
 DELETE /v1/registry/agents/{id}              Deregister (graceful)
 POST   /v1/registry/agents/{id}/heartbeat    Heartbeat (10s, with platform commands)
+POST   /v1/registry/agents/{id}/probe        Platform-initiated health check ("click retry")
+PUT    /v1/registry/agents/{id}/assignment   Update platform-assigned role/scope/constraints
+
+# Multi-Agent Gateway (one process → N agents)
+GET    /v1/agents                            Discover all hosted agents
+GET    /v1/agents/{id}/status                Status of a specific hosted agent
+POST   /v1/agents/{id}/aip                   Send message to a specific hosted agent
 ```
 
 ## Agent onboarding in one picture
@@ -257,9 +264,38 @@ POST /v1/registry/agents { base_url, credentials, mode }
   │
   ▼
 Agent heartbeats every 10s ──► Platform responds with { ack, commands[] }
-  │                              commands: refresh_status, drain, shutdown, update_config
+  │                              commands: refresh_status, drain, shutdown,
+  │                                        update_config, re_register, assign
   │
   ▼
 Miss 3× ──► degraded     Miss 10× ──► failed (auto-deregister)
 Resume  ──► recovered    Platform emits events: agent.registered/.degraded/.failed/.recovered
+POST probe ──► instant recovery (platform "click retry" → re-checks agent health)
 ```
+
+---
+
+## What's new in recent versions
+
+### v1.2.0 — Multi-Agent Gateway
+One process on one port hosts N agents. Per-agent routing, discovery, and aggregated GroupStatus.
+```bash
+aip bridge --config gateway.yaml   # starts gateway with all agents
+```
+
+### v1.2.1 — Production Resilience
+- HTTP retry with exponential backoff
+- WebSocket auto-reconnect
+- Stdio subprocess auto-restart
+- Circuit breaker pattern in gateway
+- Graceful shutdown with deregistration
+
+### v1.3.0 — Probe Endpoint + SDK Sync
+- `POST /v1/registry/agents/{id}/probe` — platform "click retry" for instant recovery
+- Go, Java, JS/TS SDKs synchronized to full type parity
+
+### v1.4.0 — Agent Assignment Protocol
+- `AgentAssignment` schema: `assigned_role`, `team`, `scope`, `granted_tools`, `constraints`, `supervisor`
+- Each agent has two identities: native profile + platform assignment
+- Three delivery mechanisms: registration response, heartbeat `assign` command, `PUT /assignment` endpoint
+- All SDKs updated

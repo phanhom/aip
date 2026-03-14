@@ -15,6 +15,7 @@ public record GroupStatus(
         @JsonProperty("namespace") String namespace,
         @JsonProperty("root_agent_id") String rootAgentId,
         @JsonProperty("timestamp") String timestamp,
-        @JsonProperty("agents") List<AgentStatus> agents,
-        @JsonProperty("metadata") Map<String, Object> metadata
+        @JsonProperty("topology") Map<String, List<String>> topology,
+        @JsonProperty("waiting_for_approval") Boolean waitingForApproval,
+        @JsonProperty("agents") List<AgentStatus> agents
 ) {}
