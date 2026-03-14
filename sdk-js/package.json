@@ -1,6 +1,6 @@
 {
   "name": "@aip-protocol/sdk",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Agent Interaction Protocol — JavaScript/TypeScript SDK",
   "type": "module",
   "main": "dist/index.js",

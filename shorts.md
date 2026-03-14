@@ -12,18 +12,18 @@
                           ┌──────────────────────────────────┐
                           │     AIP Management Platform      │
    Human (browser)────────│  /v1/registry/agents  (register) │
-                          │  /v1/status?scope=group (view)   │
+                          │  auto-detects protocol profiles  │
                           └──────┬────────┬────────┬─────────┘
                                  │        │        │
           ┌──────────────────────┘        │        └──────────────────────┐
           ▼                               ▼                              ▼
-   ┌─────────────┐                ┌──────────────┐              ┌──────────────┐
-   │ Coordinator  │  POST /v1/aip │ AIP Adapter   │  native API │  Open Claw   │
-   │ (native AIP) │◄────────────►│ (thin wrapper) │◄───────────►│  Manus, etc. │
-   └──┬───┬───┬──┘               └──────────────┘              └──────────────┘
-      │   │   │
-      ▼   ▼   ▼                  ← each has GET /v1/status (presentation, skills, auth)
-   Backend  Frontend  QA         ← each sends heartbeats to platform
+   ┌─────────────┐               ┌──────────────┐              ┌──────────────┐
+   │ Coordinator  │  POST /v1/aip│  Open Claw   │  OpenAI API  │  Ollama      │
+   │ (native AIP) │◄───────────►│  (discovered) │◄────────────│  (discovered) │
+   └──┬───┬───┬──┘              └──────────────┘              └──────────────┘
+      │   │   │                   ↑ no bridge!                  ↑ no bridge!
+      ▼   ▼   ▼                   platform probes directly      platform probes directly
+   Backend  Frontend  QA
 ```
 
 ---
@@ -78,12 +78,49 @@ curl -N http://my-agent.example.com/v1/aip \
 
 ---
 
-## For agents that DON'T speak AIP natively (the adapter pattern)
+## Zero-Config Discovery (v1.5.0) — no bridge needed
+
+For agents that DON'T speak AIP natively, the platform discovers them **by URL alone**:
+
+```
+┌──────────────┐   probes URL   ┌───────────────┐
+│  AIP Platform │──────────────►│  Any Agent     │
+│  (auto-detect │  GET /v1/models│  (OpenClaw,    │
+│   + translate)│◄──────────────│   Ollama, etc.)│
+└──────────────┘               └───────────────┘
+  no bridge, no sidecar — the platform handles everything
+```
+
+```bash
+# Add an OpenClaw instance — ONE API call, nothing installed on agent machine
+curl -X POST https://platform.example.com/v1/registry/agents \
+  -H "Content-Type: application/json" \
+  -d '{ "base_url": "http://192.168.1.10:3000" }'
+```
+
+The platform:
+1. Probes `GET /v1/status` → 404 (not AIP native)
+2. Probes `GET /.well-known/agent.json` → 404 (not A2A)
+3. Probes `GET /v1/models` → 200 → **OpenAI-compatible!**
+4. Builds AgentStatus, starts health-checking, ready for messages
+
+### Supported profiles (auto-detected)
+
+| Profile | Detection | Covers |
+|---------|-----------|--------|
+| `aip` | `GET /v1/status` | Native AIP agents |
+| `openai` | `GET /v1/models` | OpenClaw, Ollama, vLLM, LiteLLM, LM Studio, LocalAI |
+| `a2a` | `GET /.well-known/agent.json` | Google A2A agents |
+| `anthropic` | `POST /v1/messages` | Anthropic Claude API |
+
+## For agents behind NAT/firewalls (the bridge pattern)
+
+When the platform can't reach the agent directly, use the bridge:
 
 ```
 ┌──────────────┐     AIP protocol     ┌──────────────┐     Native API     ┌───────────────┐
-│  AIP Platform │◄───────────────────►│  AIP Adapter   │◄────────────────►│  Any Agent     │
-│               │  /v1/aip, /v1/status│  (your code)   │  /chat, /run     │  (OpenAI, etc.)│
+│  AIP Platform │◄───────────────────►│  AIP Bridge    │◄────────────────►│  Any Agent     │
+│               │  /v1/aip, /v1/status│  (your machine)│  /chat, /run     │  (behind NAT)  │
 └──────────────┘                      └──────────────┘                    └───────────────┘
 ```
 
@@ -91,9 +128,9 @@ See `examples/adapter-python/adapter.py` — a complete, copy-paste-ready adapte
 Edit 3 functions, run it, your agent is on AIP:
 
 ```python
-def get_agent_skills():       # ✏️ what can your agent do?
-def get_agent_presentation(): # ✏️ how should it look in UIs?
-async def call_external_agent(intent, payload):  # ✏️ translate AIP → your agent's API
+def get_agent_skills():       # what can your agent do?
+def get_agent_presentation(): # how should it look in UIs?
+async def call_external_agent(intent, payload):  # translate AIP → your agent's API
 ```
 
 ```bash
@@ -250,22 +287,26 @@ POST   /v1/agents/{id}/aip                   Send message to a specific hosted a
 ## Agent onboarding in one picture
 
 ```
-Agent starts
+POST /v1/registry/agents { base_url, protocol?, credentials? }
+  │
+  ├── Protocol discovery (Section 17):
+  │     1. GET {url}/v1/status      → AIP native?
+  │     2. GET {url}/.well-known/agent.json → A2A?
+  │     3. GET {url}/v1/models      → OpenAI-compatible?
+  │     4. GET {url}/health         → alive but unknown?
+  │
+  ├── Build AgentStatus (native or synthetic)
+  ├── Validates: namespace ✓  quota ✓  duplicate ✓
   │
   ▼
-POST /v1/registry/agents { base_url, credentials, mode }
+201 Created { agent_id, protocol_detected, heartbeat_interval: 10, capabilities_detected }
   │
-  ├── Platform probes GET {base_url}/v1/status  (mutual auth)
-  ├── Validates: schema ✓  version compat ✓  namespace ✓  quota ✓
-  ├── Detects capabilities: status, messaging, streaming, tasks, artifacts
+  ├── AIP-native agents: heartbeat every 10s
+  │     Platform responds with { ack, commands[] }
+  │     commands: refresh_status, drain, shutdown, update_config, re_register, assign
   │
-  ▼
-201 Created { agent_id, heartbeat_url, heartbeat_interval: 10, capabilities_detected }
-  │
-  ▼
-Agent heartbeats every 10s ──► Platform responds with { ack, commands[] }
-  │                              commands: refresh_status, drain, shutdown,
-  │                                        update_config, re_register, assign
+  ├── Non-AIP agents: platform health-probes every 10s
+  │     (GET /v1/models for openai, GET /.well-known/agent.json for a2a, etc.)
   │
   ▼
 Miss 3× ──► degraded     Miss 10× ──► failed (auto-deregister)
@@ -299,3 +340,12 @@ aip bridge --config gateway.yaml   # starts gateway with all agents
 - Each agent has two identities: native profile + platform assignment
 - Three delivery mechanisms: registration response, heartbeat `assign` command, `PUT /assignment` endpoint
 - All SDKs updated
+
+### v1.5.0 — Platform-Side Agent Discovery
+- **Zero-config discovery**: platform probes a URL, auto-detects protocol, registers the agent
+- **No bridge needed**: OpenClaw, Ollama, vLLM — just give the platform the URL
+- Protocol profiles: `aip`, `openai`, `a2a`, `anthropic` (auto-detected or hinted)
+- `protocol` field in registration request; `protocol_detected` in response
+- Server-side translation: platform converts AIP ↔ native API transparently
+- Python SDK `discover()` function for platform implementations
+- Health monitoring adapted per protocol profile

@@ -2,7 +2,7 @@ openapi: "3.1.0"
 
 info:
   title: Agent Interaction Protocol (AIP)
-  version: "1.4.0"
+  version: "1.5.0"
   description: |
     Open protocol for structured agent-to-agent and human-to-agent communication.
     
@@ -556,8 +556,11 @@ paths:
       operationId: registerAgent
       summary: Register an external agent with the platform
       description: |
-        An agent announces itself to the platform by providing its base_url.
-        The platform probes GET {base_url}/v1/status to validate and enrich the registration.
+        Register an agent with the platform by providing its base_url.
+        The platform probes the URL to detect the agent's protocol and capabilities.
+        Supports native AIP agents, OpenAI-compatible agents, A2A agents, and more.
+        Use the "protocol" field to hint or force a specific profile, or omit for auto-detection.
+        See spec Section 17 for the full discovery algorithm.
       requestBody:
         required: true
         content:
@@ -748,12 +751,23 @@ components:
     AgentRegistration:
       type: object
       required: [base_url]
-      description: Request to register an external agent with the platform.
+      description: |
+        Request to register an external agent with the platform.
+        The platform probes the base_url using the specified protocol profile
+        (or auto-detects if protocol is "auto" or omitted).
       properties:
         base_url:
           type: string
           format: uri
-          description: The agent's root URL. Platform will probe {base_url}/v1/status.
+          description: The agent's root URL. Platform will probe this URL to detect capabilities.
+        protocol:
+          type: string
+          enum: [auto, aip, openai, anthropic, a2a]
+          default: auto
+          description: |
+            Protocol hint for the platform. "auto" (default) runs the full
+            discovery sequence. Specific values skip detection and probe only
+            the indicated profile. See spec Section 17.
         namespace:
           type: ["string", "null"]
           description: Requested namespace.
@@ -776,6 +790,11 @@ components:
         base_url:
           type: string
           format: uri
+        protocol_detected:
+          type: string
+          description: |
+            The protocol profile the platform detected (or confirmed).
+            One of: aip, openai, anthropic, a2a, unknown. See spec Section 17.
         namespace:
           type: ["string", "null"]
         registered_at:
@@ -806,6 +825,10 @@ components:
         base_url:
           type: string
           format: uri
+        protocol:
+          type: string
+          description: Protocol profile used to communicate with this agent (aip, openai, a2a, etc.).
+          default: aip
         namespace:
           type: ["string", "null"]
         status:

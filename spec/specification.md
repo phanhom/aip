@@ -1646,6 +1646,7 @@ These endpoints are implemented by the **platform**, not by individual agents.
 ```json
 {
   "base_url": "https://my-agent.example.com",
+  "protocol": "auto",
   "namespace": "acme-corp",
   "credentials": {
     "platform_to_agent": {
@@ -1664,7 +1665,8 @@ These endpoints are implemented by the **platform**, not by individual agents.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `base_url` | string | REQUIRED | Agent's root URL. Platform will probe `{base_url}/v1/status`. |
+| `base_url` | string | REQUIRED | Agent's root URL. Platform will probe this URL to detect capabilities (see Section 17). |
+| `protocol` | string | OPTIONAL | Protocol hint: `"auto"` (default), `"aip"`, `"openai"`, `"anthropic"`, `"a2a"`. See Section 17. |
 | `namespace` | string \| null | OPTIONAL | Requested namespace. Platform MAY override. Default: `null` (default namespace). |
 | `credentials` | object \| null | OPTIONAL | Mutual authentication credentials (see 15.4.2). |
 | `tags` | array[string] | OPTIONAL | Additional discovery tags. |
@@ -1727,9 +1729,9 @@ Agent/Adapter                         Platform
 **Handshake validation steps (server MUST perform in order):**
 
 1. **Schema validation** — request conforms to the registration schema.
-2. **Status probe** — `GET {base_url}/v1/status` succeeds within 10 seconds (using `platform_to_agent` credential if provided).
-3. **AgentStatus validation** — response contains at least `agent_id` and `role`.
-4. **Version compatibility** — `supported_versions` in the status response includes at least one version the platform supports.
+2. **Protocol discovery** — if `protocol` is `"auto"` or omitted, run the auto-detection sequence (Section 17.3). If a specific protocol is given, probe only that profile. For `"aip"`, this means `GET {base_url}/v1/status`; for `"openai"`, `GET {base_url}/v1/models`; etc.
+3. **AgentStatus construction** — for native AIP agents, validate that the response contains at least `agent_id` and `role`. For non-AIP agents, build a synthetic AgentStatus (Section 17.2).
+4. **Version compatibility** — `supported_versions` in the status response includes at least one version the platform supports (AIP-native only).
 5. **Namespace authorization** — the caller is allowed to register in the requested namespace.
 6. **Quota check** — the namespace has not reached its agent limit.
 7. **Duplicate check** — no existing active registration with the same `agent_id` in this namespace.
@@ -1744,6 +1746,7 @@ If any step fails, the platform returns the appropriate error code (see 15.10) a
   "base_url": "https://my-agent.example.com",
   "namespace": "acme-corp",
   "mode": "native",
+  "protocol_detected": "aip",
   "registered_at": "2026-03-12T10:00:00Z",
   "status": "active",
   "heartbeat_interval_seconds": 10,
@@ -1765,8 +1768,9 @@ If any step fails, the platform returns the appropriate error code (see 15.10) a
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `agent_id` | string | The agent's ID (from its AgentStatus). |
+| `agent_id` | string | The agent's ID (from its AgentStatus or auto-detected). |
 | `base_url` | string | Echoed back. |
+| `protocol_detected` | string | Protocol profile detected or confirmed: `"aip"`, `"openai"`, `"a2a"`, `"unknown"`. See Section 17. |
 | `namespace` | string | Assigned namespace (may differ from requested). |
 | `mode` | string | Onboarding mode. |
 | `registered_at` | string | ISO 8601 timestamp. |
@@ -2265,6 +2269,252 @@ aip bridge --config gateway.yaml
 | All agents down | `GET /v1/status` returns `ok: false`. `GET /health` returns `{"ok": false, "agents": {...}}`. The gateway itself stays up. |
 | Message to non-existent agent | Return `aip/protocol/agent_not_found` with HTTP 404 and list available agent IDs. |
 | Large number of agents (100+) | Implementations SHOULD use connection pooling and async I/O. Per-agent timeouts prevent one slow agent from blocking others. |
+
+---
+
+## 17. Platform-Side Agent Discovery
+
+### 17.1 Motivation
+
+Section 15 defines how agents register with a platform via `POST /v1/registry/agents`. That flow assumes the agent (or a bridge process) initiates registration and speaks AIP natively — exposing `GET /v1/status` and `POST /v1/aip`.
+
+Many real-world agents do NOT speak AIP. They expose OpenAI-compatible chat/completions, Google A2A agent cards, or other common APIs. Requiring every such agent to run a sidecar bridge process adds operational friction.
+
+**Platform-Side Agent Discovery** inverts the responsibility: the **platform** probes a URL, auto-detects the agent's native protocol, builds a synthetic `AgentStatus`, and handles all protocol translation server-side. The agent machine runs exactly what it already runs — nothing more.
+
+### 17.2 Protocol Profiles
+
+A **protocol profile** defines how the platform interacts with a specific class of agents. Each profile specifies:
+
+1. **Detection** — which endpoint to probe and what a valid response looks like.
+2. **Status mapping** — how to construct an `AgentStatus` from the native response.
+3. **Message translation** — how to convert `POST /v1/aip` messages to the native API.
+4. **Health probe** — how to periodically check the agent is alive.
+
+The following profiles are RECOMMENDED for platform implementations. Platforms MAY support additional profiles.
+
+| Profile | Detection Probe | Message Endpoint | Health Probe |
+|---------|----------------|------------------|-------------|
+| `aip` | `GET {url}/v1/status` returns valid `AgentStatus` | `POST {url}/v1/aip` (native) | `GET {url}/v1/status` |
+| `openai` | `GET {url}/v1/models` returns `{ data: [...] }` | `POST {url}/v1/chat/completions` | `GET {url}/v1/models` |
+| `anthropic` | `POST {url}/v1/messages` with minimal payload returns 200/400 (not 404) | `POST {url}/v1/messages` | `GET {url}/v1/models` or TCP connect |
+| `a2a` | `GET {url}/.well-known/agent.json` returns valid agent card | Per A2A spec | `GET {url}/.well-known/agent.json` |
+
+#### 17.2.1 Profile: `aip` (Native)
+
+No translation required. The platform communicates directly using the AIP protocol. This is the standard flow described in Section 15.
+
+#### 17.2.2 Profile: `openai` (OpenAI-Compatible)
+
+Covers: OpenClaw, Ollama, vLLM, LiteLLM, LM Studio, LocalAI, OpenRouter, and any server implementing the OpenAI chat/completions API.
+
+**Detection:**
+
+```
+GET {base_url}/v1/models
+→ 200 { "data": [{ "id": "model-name", ... }, ...] }
+```
+
+A 200 response with a JSON object containing a `data` array of model objects confirms the agent speaks OpenAI-compatible API.
+
+**Status mapping:**
+
+| AIP field | Source |
+|-----------|--------|
+| `agent_id` | First model's `id`, or hostname-derived |
+| `role` | `"agent"` |
+| `lifecycle` | `"running"` |
+| `ok` | `true` |
+| `capabilities` | `["messaging"]` (add `"streaming"` if SSE is supported) |
+| `presentation.display_name` | Derived from model ID or hostname |
+| `supported_versions` | `["1.0"]` |
+| `metadata.protocol` | `"openai"` |
+| `metadata.models` | Array of available model IDs |
+
+**Message translation (AIP → OpenAI):**
+
+```
+AIPMessage { intent, payload }
+→ POST {base_url}/v1/chat/completions
+  { "model": "<first_model>", "messages": [{"role": "user", "content": "<intent>"}] }
+```
+
+If `payload.messages` is present, they are prepended as conversation history.
+
+**Health probe:**
+
+```
+GET {base_url}/v1/models → 200 = healthy
+```
+
+#### 17.2.3 Profile: `a2a` (Google Agent-to-Agent)
+
+**Detection:**
+
+```
+GET {base_url}/.well-known/agent.json
+→ 200 { "name": "...", "description": "...", "skills": [...], ... }
+```
+
+**Status mapping:**
+
+| AIP field | Source |
+|-----------|--------|
+| `agent_id` | Agent card `url` or `name` (slugified) |
+| `role` | `"agent"` |
+| `presentation.display_name` | Agent card `name` |
+| `presentation.description` | Agent card `description` |
+| `skills` | Mapped from agent card `skills` |
+| `metadata.protocol` | `"a2a"` |
+
+### 17.3 Auto-Detection Algorithm
+
+When an agent is registered with `protocol: "auto"` (or protocol omitted), the platform MUST run the following detection sequence. The platform stops at the first successful probe.
+
+```
+1. GET {base_url}/v1/status
+   → Valid AgentStatus?  → protocol = "aip"
+
+2. GET {base_url}/.well-known/agent.json
+   → Valid agent card?   → protocol = "a2a"
+
+3. GET {base_url}/v1/models
+   → JSON with data[]?   → protocol = "openai"
+
+4. GET {base_url}/health  (or GET {base_url}/api/health)
+   → 200?                → protocol = "unknown" (health-only, no messaging)
+
+5. TCP connect to {host}:{port}
+   → Success?            → protocol = "unknown" (alive but no known API)
+
+6. All probes fail       → Return 422 "Agent unreachable"
+```
+
+Each probe MUST use a timeout of **5 seconds**. The total discovery sequence SHOULD complete within **15 seconds**.
+
+### 17.4 Registration with Protocol Hint
+
+The `POST /v1/registry/agents` request (Section 15.4) is extended with an OPTIONAL `protocol` field:
+
+```json
+{
+  "base_url": "http://192.168.1.10:3000",
+  "protocol": "auto",
+  "namespace": "acme-corp",
+  "tags": ["coding", "agent"]
+}
+```
+
+| Value | Behavior |
+|-------|----------|
+| `"auto"` (default) | Platform runs the full detection sequence (17.3). |
+| `"aip"` | Platform probes `GET {url}/v1/status` only. Fails if not AIP-native. |
+| `"openai"` | Platform probes `GET {url}/v1/models` only. Translates messages accordingly. |
+| `"anthropic"` | Platform uses Anthropic messages API. |
+| `"a2a"` | Platform probes `GET {url}/.well-known/agent.json`. |
+| _(other)_ | Platform-specific custom profile. |
+
+When `protocol` is not `"aip"`, the platform constructs a synthetic `AgentStatus` from the discovery result (see 17.2). This status is stored as `cached_status` in the registration record.
+
+The registration response includes the detected protocol:
+
+```json
+{
+  "agent_id": "openclaw-coder",
+  "base_url": "http://192.168.1.10:3000",
+  "protocol_detected": "openai",
+  "status": "active",
+  "capabilities_detected": ["messaging"],
+  "cached_status": { "...synthetic AgentStatus..." },
+  "...other standard fields..."
+}
+```
+
+### 17.5 Server-Side Translation
+
+When the platform receives an AIP message destined for a non-AIP agent (via `POST /v1/aip` with routing, or via the platform's message router), the platform MUST translate the message according to the agent's protocol profile.
+
+**Translation rules:**
+
+1. The platform extracts `intent` and `payload` from the `AIPMessage`.
+2. The platform encodes them using the profile's message translation rules (17.2).
+3. The platform sends the translated request to the agent's `base_url`.
+4. The platform decodes the native response and wraps it in an `AIPAck` or SSE stream.
+
+Platforms MUST preserve `message_id`, `correlation_id`, and `trace_id` across translation boundaries. These fields SHOULD be stored in the platform's trace system even though the native agent does not use them.
+
+### 17.6 Health Monitoring for Non-AIP Agents
+
+For agents registered with a non-AIP protocol, the platform MUST periodically health-check using the profile's health probe (17.2) instead of expecting heartbeats.
+
+| Parameter | Value |
+|-----------|-------|
+| Probe interval | Same as `heartbeat_interval_seconds` (default: 10s). |
+| Probe timeout | 5 seconds. |
+| Degraded threshold | 3 consecutive probe failures. |
+| Failed threshold | 10 consecutive probe failures. |
+
+The same lifecycle rules from Section 15.6.4 apply. The platform MUST emit the same events (`agent.degraded`, `agent.failed`, `agent.recovered`).
+
+### 17.7 Example: Adding an OpenClaw Agent Without a Bridge
+
+**Machine A** runs OpenClaw on port 3000. No AIP bridge, no sidecar, no extra process.
+
+**Platform admin** (or automation) runs:
+
+```bash
+curl -X POST https://platform.example.com/v1/registry/agents \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -d '{
+    "base_url": "http://192.168.1.10:3000",
+    "namespace": "dev-team",
+    "tags": ["coding", "agent"],
+    "credentials": {
+      "platform_to_agent": {
+        "scheme": "bearer",
+        "token": "openclaw-gateway-token"
+      }
+    }
+  }'
+```
+
+**What the platform does:**
+
+1. Probes `GET http://192.168.1.10:3000/v1/status` → 404 (not AIP).
+2. Probes `GET http://192.168.1.10:3000/.well-known/agent.json` → 404 (not A2A).
+3. Probes `GET http://192.168.1.10:3000/v1/models` → 200 `{ "data": [{ "id": "openclaw-v1" }] }` → **OpenAI-compatible**.
+4. Builds synthetic `AgentStatus`:
+   ```json
+   {
+     "agent_id": "openclaw-v1",
+     "role": "agent",
+     "namespace": "dev-team",
+     "presentation": {
+       "display_name": "openclaw-v1 @ 192.168.1.10",
+       "categories": ["coding", "agent"]
+     },
+     "lifecycle": "running",
+     "ok": true,
+     "base_url": "http://192.168.1.10:3000",
+     "capabilities": ["messaging"],
+     "supported_versions": ["1.0"],
+     "metadata": {
+       "protocol": "openai",
+       "models": ["openclaw-v1"]
+     }
+   }
+   ```
+5. Returns 201 with the registration, including `"protocol_detected": "openai"`.
+6. Starts health-checking `GET /v1/models` every 10 seconds.
+
+**Result:** The agent appears in the platform dashboard immediately. Other agents can send it tasks. The platform translates AIP → OpenAI chat/completions transparently.
+
+### 17.8 Protocol Profile Extensibility
+
+Platforms MAY define custom protocol profiles beyond those listed in 17.2. Custom profiles MUST use a namespaced identifier (e.g., `x-myplatform/custom-agent`).
+
+A platform that detects an unknown protocol SHOULD still register the agent with `protocol: "unknown"` and `capabilities: []`. The agent will be visible in the registry (for monitoring) but will not accept messages until a profile is configured.
 
 ---
 

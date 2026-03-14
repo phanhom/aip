@@ -78,9 +78,44 @@ AIP is to agent collaboration what HTTP is to web communication: a universal, co
 | `GET /v1/agents/{id}/status` | Status of a specific hosted agent |
 | `POST /v1/agents/{id}/aip` | Send message to a specific hosted agent |
 
+## Zero-Config Agent Discovery
+
+The platform can add **any agent by URL** — no bridge process, no sidecar, no extra install on the agent machine. The platform auto-detects the protocol, builds a capability profile, and handles all translation server-side.
+
+```bash
+# Add an OpenClaw instance — just its URL, nothing else
+curl -X POST https://platform.example.com/v1/registry/agents \
+  -H "Content-Type: application/json" \
+  -d '{ "base_url": "http://192.168.1.10:3000" }'
+```
+
+The platform probes the URL, discovers it's OpenAI-compatible, and registers it. Done — visible in the dashboard, ready to receive tasks.
+
+### Supported Protocol Profiles
+
+| Profile | Auto-detected via | Covers |
+|---------|------------------|--------|
+| `aip` | `GET /v1/status` returns AgentStatus | Native AIP agents |
+| `openai` | `GET /v1/models` returns model list | OpenClaw, Ollama, vLLM, LiteLLM, LM Studio, LocalAI, OpenRouter |
+| `a2a` | `GET /.well-known/agent.json` | Google A2A protocol agents |
+| `anthropic` | `POST /v1/messages` responds | Anthropic Claude API |
+
+Or skip auto-detection with a hint: `{ "base_url": "...", "protocol": "openai" }`.
+
+### Python SDK
+
+```python
+from aip import discover
+
+result = await discover("http://192.168.1.10:3000")
+print(result.protocol)       # "openai"
+print(result.models)         # ["openclaw-v1"]
+status = result.to_agent_status(namespace="my-team")
+```
+
 ## One-Line Bridge
 
-Connect **any** agent to an AIP platform — one command, any protocol, any network:
+For agents behind NAT, on different networks, or when you want a local AIP endpoint — use the bridge:
 
 ```bash
 pip install aip-protocol[bridge] && aip bridge --agent <url> --platform <url> --secret <key>
