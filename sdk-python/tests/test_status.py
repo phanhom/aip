@@ -1,6 +1,15 @@
 """Tests for AIP status models."""
 
-from aip import AgentStatus, GroupStatus, RecursiveStatusNode, StatusEndpoints, StatusScope
+from aip import (
+    AgentStatus,
+    GroupStatus,
+    Lifecycle,
+    RecursiveStatusNode,
+    Skill,
+    SkillDescriptor,
+    StatusEndpoints,
+    StatusScope,
+)
 
 
 class TestAgentStatus:
@@ -24,6 +33,34 @@ class TestAgentStatus:
         )
         assert s.endpoints is not None
         assert s.endpoints.aip == "https://backend.example.com/aip"
+
+    def test_lifecycle_enum(self):
+        s = AgentStatus(agent_id="a", role="r", lifecycle="running")
+        assert s.lifecycle == Lifecycle.running
+        assert s.lifecycle == "running"
+
+    def test_lifecycle_null(self):
+        s = AgentStatus(agent_id="a", role="r", lifecycle=None)
+        assert s.lifecycle is None
+
+    def test_with_skills(self):
+        s = AgentStatus(
+            agent_id="a",
+            role="r",
+            skills=[Skill(id="api", name="API Design", description="Designs APIs")],
+        )
+        assert len(s.skills) == 1
+        assert s.skills[0].id == "api"
+
+
+class TestSkillDescriptorAlias:
+    def test_skill_and_descriptor_are_same(self):
+        assert Skill is SkillDescriptor
+
+    def test_create_via_either_name(self):
+        s1 = Skill(id="a", name="A", description="desc")
+        s2 = SkillDescriptor(id="b", name="B", description="desc")
+        assert type(s1) is type(s2)
 
 
 class TestRecursiveStatusNode:

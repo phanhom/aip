@@ -6,8 +6,10 @@ from typing import Any
 
 import httpx
 
+from aip.transport.base import BaseTransport
 
-class HTTPTransport:
+
+class HTTPTransport(BaseTransport):
     """Default AIP transport using HTTP POST with JSON bodies.
 
     Thin wrapper around httpx; for production use with retries,

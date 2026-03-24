@@ -15,9 +15,35 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.6.0"
+__version__ = "1.6.2"
 
 from aip.bridge import BridgeConfig
+from aip.client import (
+    async_cancel_task,
+    async_deregister_agent,
+    async_emit_traces,
+    async_fetch_status,
+    async_get_artifact,
+    async_get_task,
+    async_get_usage,
+    async_heartbeat,
+    async_query_traces,
+    async_register_agent,
+    async_send_to_task,
+    async_upload_artifact,
+    cancel_task,
+    deregister_agent,
+    emit_traces,
+    fetch_status,
+    get_artifact,
+    get_task,
+    get_usage,
+    heartbeat,
+    query_traces,
+    register_agent,
+    send_to_task,
+    upload_artifact,
+)
 from aip.discovery import DiscoveryError, DiscoveryResult, discover
 from aip.gateway import AgentEntry, GatewayConfig
 from aip.jsonrpc_bridge import (
@@ -28,6 +54,7 @@ from aip.jsonrpc_bridge import (
     jsonrpc_to_aip,
 )
 from aip.message import (
+    AckStatus,
     AIPAck,
     AIPAction,
     AIPErrorCode,
@@ -37,6 +64,7 @@ from aip.message import (
     AIPTask,
     ApprovalState,
     Artifact,
+    Lifecycle,
     RouteScope,
     Skill,
     TaskState,
@@ -55,13 +83,22 @@ from aip.observability import (
     UsageQuery,
     UsageSummary,
 )
+from aip.security import (
+    EVENT_HEADER,
+    SIGNATURE_HEADER,
+    sign_callback,
+    verify_callback,
+)
 from aip.send import (
     DEFAULT_API_VERSION,
     SendParams,
+    SSEEvent,
     async_send,
     async_send_batch,
+    async_send_stream,
     send,
     send_batch,
+    send_stream,
 )
 from aip.status import (
     AgentAssignment,
@@ -88,19 +125,53 @@ __all__ = [
     "AIPPriority",
     "AIPStatus",
     "AIPTask",
+    "AckStatus",
     "ApprovalState",
     "Artifact",
+    "Lifecycle",
     "RouteScope",
     "Skill",
     "TaskState",
     "build_message",
-    # Transport
+    # Transport — send
     "DEFAULT_API_VERSION",
+    "SSEEvent",
     "SendParams",
     "send",
     "send_batch",
+    "send_stream",
     "async_send",
     "async_send_batch",
+    "async_send_stream",
+    # Client — status
+    "fetch_status",
+    "async_fetch_status",
+    # Client — tasks
+    "get_task",
+    "async_get_task",
+    "cancel_task",
+    "async_cancel_task",
+    "send_to_task",
+    "async_send_to_task",
+    # Client — artifacts
+    "upload_artifact",
+    "async_upload_artifact",
+    "get_artifact",
+    "async_get_artifact",
+    # Client — registry
+    "register_agent",
+    "async_register_agent",
+    "heartbeat",
+    "async_heartbeat",
+    "deregister_agent",
+    "async_deregister_agent",
+    # Client — traces & usage
+    "emit_traces",
+    "async_emit_traces",
+    "query_traces",
+    "async_query_traces",
+    "get_usage",
+    "async_get_usage",
     # Status / Discovery
     "StatusScope",
     "StatusEndpoints",
@@ -126,6 +197,11 @@ __all__ = [
     "AgentUsageBreakdown",
     "UsageSummary",
     "UsageQuery",
+    # Security
+    "sign_callback",
+    "verify_callback",
+    "SIGNATURE_HEADER",
+    "EVENT_HEADER",
     # JSON-RPC bridge
     "is_jsonrpc",
     "aip_to_jsonrpc",

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aip.message import Lifecycle, Skill, _utc_now
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+SkillDescriptor = Skill
 
 
 class StatusScope(str, Enum):
@@ -36,20 +36,6 @@ class WorkSnapshot(BaseModel):
     recent_messages: list[dict[str, Any]] = Field(default_factory=list)
     last_seen: str | None = None
     pending_tasks: int = 0
-
-
-class SkillDescriptor(BaseModel):
-    """Structured skill descriptor for rich agent discovery (aligned with A2A Agent Card)."""
-
-    id: str
-    name: str
-    description: str
-    tags: list[str] = Field(default_factory=list)
-    input_modes: list[str] = Field(default_factory=lambda: ["application/json"])
-    output_modes: list[str] = Field(default_factory=lambda: ["application/json"])
-    input_schema: dict[str, Any] | None = None
-    output_schema: dict[str, Any] | None = None
-    examples: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Provider(BaseModel):
@@ -86,7 +72,7 @@ class AgentAssignment(BaseModel):
     team: str | None = None
     scope: str | None = None
     granted_tools: list[str] = Field(default_factory=list)
-    granted_skills: list[SkillDescriptor] = Field(default_factory=list)
+    granted_skills: list[Skill] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     supervisor: str | None = None
     priority: str | None = None
@@ -124,13 +110,13 @@ class AgentStatus(BaseModel):
     presentation: Presentation | None = None
     superior: str | None = None
     authority_weight: int | None = None
-    lifecycle: str | None = None
+    lifecycle: Lifecycle | None = None
     port: int | None = None
     ok: bool = True
     base_url: str | None = None
     endpoints: StatusEndpoints | None = None
     capabilities: list[str] = Field(default_factory=list)
-    skills: list[SkillDescriptor] = Field(default_factory=list)
+    skills: list[Skill] = Field(default_factory=list)
     supported_versions: list[str] = Field(default_factory=lambda: ["1.0"])
     authentication: AuthenticationInfo | None = None
     rate_limits: RateLimitInfo | None = None

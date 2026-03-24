@@ -48,6 +48,25 @@ class ApprovalState(str, Enum):
     rejected = "rejected"
 
 
+class AckStatus(str, Enum):
+    """Acknowledgment acceptance status (spec Section 4.3)."""
+
+    received = "received"
+    queued = "queued"
+    rejected = "rejected"
+
+
+class Lifecycle(str, Enum):
+    """Agent lifecycle states (spec Section 5.3)."""
+
+    idle = "idle"
+    starting = "starting"
+    running = "running"
+    blocked = "blocked"
+    degraded = "degraded"
+    failed = "failed"
+
+
 class AIPAction(str, Enum):
     """Standard protocol actions. Custom actions should use x-<org>/<name> prefix."""
 
@@ -140,7 +159,7 @@ class AIPMessage(BaseModel):
     priority: AIPPriority = AIPPriority.normal
     status: AIPStatus = AIPStatus.pending
 
-    authority_weight: int = 50
+    authority_weight: int = Field(default=50, ge=0, le=100)
     requires_approval: bool = False
     approval_state: ApprovalState = ApprovalState.not_required
 
@@ -173,7 +192,7 @@ class AIPAck(BaseModel):
     ok: bool = True
     message_id: str
     to: str
-    status: str = "received"
+    status: AckStatus = AckStatus.received
     task_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
