@@ -80,7 +80,7 @@ class AIPAction(str, Enum):
     escalate = "escalate"
     tool_result = "tool_result"
     sync_skill_registry = "sync_skill_registry"
-    user_instruction = "user_instruction"
+    chat = "chat"
 
 
 class AIPErrorCode:

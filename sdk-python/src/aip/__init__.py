@@ -15,7 +15,7 @@ Quick start:
     response = send(base_url="http://localhost:8000", message=msg)
 """
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 
 from aip.bridge import BridgeConfig
 from aip.client import (

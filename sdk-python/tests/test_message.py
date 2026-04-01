@@ -60,7 +60,7 @@ class TestAIPMessageWire:
         msg = build_message(
             from_agent="user",
             to="backend",
-            action=AIPAction.user_instruction,
+            action=AIPAction.chat,
             intent="Hello",
         )
         wire = msg.to_wire()
